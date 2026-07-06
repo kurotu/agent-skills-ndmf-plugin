@@ -114,10 +114,30 @@ clips -- see the "Why this shape of problem bites people" note in SKILL.md.
   whatever your pass set. Enumerate clips via `AnimatorServicesContext`'s
   indexed data (or walk `VirtualControllerContext`'s controllers directly) to
   find the bindings whose path/property match what you changed.
-- **Removing an object or component outright** (rather than changing its
-  value) can leave animation curves pointing at a path/property that no longer
-  resolves to anything. Don't assume this is automatically harmless without
-  checking for the specific case you're in -- verify in the actual Editor (see
+- **Moving, renaming, reparenting, or removing a GameObject** while
+  `AnimatorServicesContext` is active is a separate concern from the curve
+  values above -- it's about whether an animation path (e.g.
+  `Body/Hips/Chest`) still resolves to the right object at all, not what
+  value a curve carries. `AnimatorServicesContext.ObjectPathRemapper` tracks
+  this automatically, but only if you follow its rules:
+  - **Moving or renaming an object is free** -- paths are tracked by
+    `Transform` reference internally, not by string, so no extra call is
+    needed for this case alone.
+  - **Removing an object outright with a replacement taking its place**
+    requires calling `ObjectPathRemapper.ReplaceObject(old, new)` before the
+    removal, so existing animation paths get redirected to the replacement
+    instead of going dangling.
+  - **Adding a new object** you want existing or new animations to target:
+    call `GetVirtualPathForObject(transform)` (or `RecordObjectTree(subtree)`
+    for a whole hierarchy, e.g. an instantiated prefab) to register its path
+    before authoring curves against it.
+  - Access it via
+    `context.Extension<AnimatorServicesContext>().ObjectPathRemapper` (same
+    activation requirement as `AnimationIndex`).
+- **Removing an object with no replacement** leaves its paths resolving to
+  `null` in `ObjectPathRemapper.GetVirtualToRealPathMap()` -- i.e. any
+  animation curve still targeting it is now a dangling reference. Don't
+  assume this is automatically harmless -- verify in the actual Editor (see
   `testing.md`) whether a dangling curve binding is silently ignored or
   produces a console warning, and prune the binding explicitly
   (`GetObjectCurveBindings()`/`GetFloatCurveBindings()` plus removing the
