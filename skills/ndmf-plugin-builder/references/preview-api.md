@@ -1,0 +1,232 @@
+# NDMF Preview (`nadena.dev.ndmf.preview`)
+
+NDMF Preview is NDMF's live Scene-view preview system. Verified against
+`nadena.dev.ndmf` 1.14.0, where NDMF Preview dates to 1.5.0 (it was introduced
+whole -- there is no older, separate mechanism to fall back to). As with
+`api-reference.md`, trust the installed source under `Packages/nadena.dev.ndmf`
+over this file if they disagree.
+
+This is a separate concern from everything else in this skill: build-time
+passes (`Plugin<T>`/`Pass<T>`) transform a *copy* of the avatar during an
+actual build, while a preview filter renders a *live approximation* of that
+same transform in the Scene view without ever running a build or touching the
+real scene objects. Add this only when the user actually wants to *see* the
+transform's effect before building -- most plugins don't need it, and it's
+meaningfully more error-prone than the build-time path (see the gotcha
+below).
+
+## Registration
+
+Chain `.PreviewingWith(filterInstance)` directly off the same `.Run(...)` call
+that registers your pass:
+
+```csharp
+InPhase(BuildPhase.Transforming)
+    .AfterPlugin("nadena.dev.modular-avatar")
+    .Run(YourPass.Instance)
+    .PreviewingWith(YourPreviewFilter.Instance);
+```
+
+Use a single static/singleton `IRenderFilter` instance -- NDMF's own doc
+comment on `PreviewingWith` states each filter instance may be registered only
+once; don't `new` one per call or register the same instance from two places.
+
+## The two interfaces you implement
+
+`IRenderFilter` decides *what* to preview and builds the first version of it:
+
+- `GetTargetGroups(ComputeContext context)` returns the `RenderGroup`s
+  (renderer sets) you want to process. Query through `context` --
+  `context.GetAvatarRoots()`, `context.GetComponentsInChildren<T>(root,
+  includeInactive)`, `context.Observe(obj)`, etc. -- rather than plain Unity
+  APIs. This is what makes the whole thing reactive: NDMF tracks what your
+  query touched and recomputes automatically when it changes, so editing a
+  settings field or adding/removing a component updates the Scene view without
+  any manual event wiring on your part.
+- `Instantiate(RenderGroup group, IEnumerable<(Renderer original, Renderer
+  proxy)> proxyPairs, ComputeContext context)` builds the first
+  `IRenderFilterNode` for a group. Same rule as the build-time path: clone
+  Mesh/Material/Texture, never mutate `original` in place. NDMF actively
+  enforces this -- it snapshots each original renderer's `sharedMaterials`
+  before calling `Instantiate` and compares afterward; if you changed the
+  original, it logs a warning and force-restores it. Write to `proxy`, read
+  from `original`.
+
+`IRenderFilterNode` is the live instance for one group:
+
+- `Refresh(proxyPairs, context, updatedAspects)` rebuilds when an upstream
+  dependency changes (e.g. re-run the same logic as `Instantiate`). Returning
+  `null` tells the pipeline to fall back to a fresh `Instantiate` instead.
+- `OnFrame(Renderer original, Renderer proxy)` -- see the gotcha below; this is
+  not optional for a filter that changes materials.
+- `Dispose()` must destroy every Mesh/Material/Texture instance you created,
+  the same lifetime discipline as `AssetSaver`-tracked objects in a build.
+
+## The gotcha that will cost you the most time: materials must be reapplied every frame in `OnFrame`
+
+This is the single most expensive mistake to make here, because it produces
+**no error, no warning, a clean compile, and passing unit tests** -- the only
+symptom is "I enabled preview and nothing changed," which looks exactly like a
+dozen more mundane causes (preview disabled, wrong avatar, filter not
+registered).
+
+NDMF's proxy pipeline resets state every single rendered frame, before your
+filter chain runs: `ProxyObjectController.OnPreFrame()`
+(`Packages/nadena.dev.ndmf/Editor/PreviewSystem/Rendering/ProxyObjectController.cs`)
+unconditionally does `Renderer.sharedMaterials = _originalRenderer.sharedMaterials;`
+to re-mirror the proxy against the original's *current* state, and only after
+that does `ProxyPipeline.OnFrame` call each node's `OnFrame(original, proxy)`.
+This runs on every camera render (`ProxySession.OnPreCull`), not once at
+setup. So:
+
+```csharp
+// WRONG: this only sticks for the single frame Instantiate/Refresh ran in.
+// The very next rendered frame, OnPreFrame() resets proxy.sharedMaterials
+// back to the original, and since OnFrame is never overridden, nothing
+// reapplies the conversion -- the proxy silently reverts to the original.
+public Task<IRenderFilterNode> Refresh(...)
+{
+    proxy.sharedMaterials = convertedMaterials;
+    return Task.FromResult<IRenderFilterNode>(this);
+}
+```
+
+The `IRenderFilterNode.OnFrame` doc comment says "generally, you should not
+modify the mesh or materials in this method" -- read that as "don't do
+*expensive* work here, like creating new Material instances," not "never
+touch the materials array." Re-assigning an already-computed Material
+*reference* every frame is cheap and is exactly what the framework expects for
+any filter whose effect is a material swap. Store what each original renderer
+should map to (e.g. `Dictionary<Renderer, Material[]>` computed once in
+`Instantiate`/`Refresh`), then reapply it in `OnFrame`:
+
+```csharp
+private readonly Dictionary<Renderer, Material[]> _convertedMaterials;
+
+public void OnFrame(Renderer original, Renderer proxy)
+{
+    if (_convertedMaterials.TryGetValue(original, out var materials))
+    {
+        proxy.sharedMaterials = materials;
+    }
+}
+```
+
+If preview "does nothing" and you've already ruled out the mundane causes (see
+the checklist below), suspect this first -- it's the quiet-by-design behavior
+most likely to be the actual cause.
+
+### Checklist before you go deeper
+
+Cheaper things to rule out first, since they produce the identical symptom:
+
+1. NDMF Preview globally enabled? (`Tools > NDM Framework`, the preview toggle
+   menu item.)
+2. Your plugin's own preview enabled in `Tools > NDM Framework > Configure
+   Previews`? (Appears automatically once any pass calls `.PreviewingWith`;
+   users can disable it per-plugin.)
+3. Does `GetTargetGroups` actually find your settings component and avatar
+   root? (Log or step through it -- see the testing section below for how to
+   call it directly.)
+4. Does your conversion logic actually succeed for the materials/values in
+   question (e.g. a target shader that's missing from the project)? Test the
+   core conversion logic in isolation first, the same way you would for the
+   build-time path.
+
+Only after all four check out does the per-frame `OnFrame` reapplication
+become the prime suspect.
+
+## `ObjectRegistry`, `AssetSaver`, and `ErrorReport` in a preview filter
+
+These three build-time-path helpers (`api-reference.md`) behave differently
+under NDMF Preview, and the difference isn't obvious from their signatures
+alone:
+
+- **`ObjectRegistry.RegisterReplacedObject(original, replacement)` works
+  unchanged, and you should still call it.** It isn't actually
+  `BuildContext`-scoped -- it reads/writes a static
+  `AsyncLocal<IObjectRegistry> ActiveRegistry`. NDMF's own preview pipeline
+  (`NodeController.Create`/`Refresh`) wraps every call into your
+  `Instantiate`/`Refresh` in an `ObjectRegistryScope`, specifically so filters
+  can register this mapping the same way a build-time pass does. Outside any
+  scope (e.g. a direct unit-test call) it's already a safe no-op. There's no
+  reason to special-case this call between the two code paths -- put it in
+  whatever shared conversion logic both paths call.
+- **`context.AssetSaver.SaveAsset(...)` is genuinely build-only and has no
+  preview equivalent.** It persists a new asset into the build's output
+  container; a preview proxy's materials are transient in-memory objects that
+  get `Dispose()`d when the node is torn down, so there's nothing to save.
+  Don't call it from preview code (you won't have a `BuildContext` to call it
+  on anyway, if your shared conversion core is designed to not need one).
+- **Don't call `ErrorReport.ReportError(...)` from a preview filter.** It
+  unconditionally logs to `Debug.LogWarning`/`Debug.LogException` every time
+  it's invoked, regardless of whether a build's error report is active (the
+  active-report check only gates whether it's *additionally* recorded into a
+  build's error list). A preview filter recomputes on every relevant edit, so
+  routing errors through it would spam the Console on every keystroke. Prefer
+  a shared "try convert, return success/failure plus enough detail to explain
+  why" core function; call `ErrorReport` only from the build-time caller, and
+  have the preview caller silently fall back to the original value.
+
+The practical shape this suggests: extract the actual per-object conversion
+logic (shader lookup, property copying, whatever your transform does) into a
+small `BuildContext`-free function that both the build `Pass` and the preview
+filter call, and let each caller layer its own error-reporting/persistence
+behavior on top. See `common-patterns.md` for the same
+duplicate-and-transform shape applied to the build-time path -- a preview
+filter is usually calling the same core logic against proxy renderers instead
+of the real ones.
+
+## Testing preview filters
+
+`ComputeContext` has a public constructor (`new ComputeContext("description")`)
+-- unlike `BuildContext`, you don't need `InternalsVisibleTo` tricks to build
+one from a test assembly. `Instantiate`/`Refresh` return `Task<IRenderFilterNode>`
+and can be implemented as synchronously-completed (`Task.FromResult(...)`),
+so calling `.Result` in a test works fine without any real async machinery.
+
+**Gotcha: `ComputeContext.GetAvatarRoots()` (and other global scene queries)
+are cached and won't see an object your test just created.** They're backed by
+a `PropCache` that only recomputes when NDMF's `ObjectWatcher` observes an
+actual editor hierarchy-change event -- which is asynchronous and never fires
+within a single synchronous `[Test]` method body. So a test that does
+`new GameObject(...)`, adds your settings component, and immediately calls
+`GetTargetGroups()` can fail with "component/avatar not found" even though the
+object genuinely exists -- not because your filter is wrong, but because the
+cache predates the object. Force a recompute with the public
+`nadena.dev.ndmf.preview.PropCacheDebug.InvalidateAllCaches()` right before the
+call that depends on current scene state:
+
+```csharp
+_builder.AddSettings();
+PropCacheDebug.InvalidateAllCaches(); // otherwise GetAvatarRoots() may return a stale, pre-test snapshot
+var groups = YourPreviewFilter.Instance.GetTargetGroups(new ComputeContext("test"));
+```
+
+Worth testing explicitly, beyond the obvious "does `Instantiate` produce the
+right material":
+
+- `Instantiate` mutates only the proxy, never the original (assert on the
+  original renderer/material after calling it).
+- Materials that should be shared (same original referenced by multiple
+  renderers) resolve to the same converted instance -- `ReferenceEquals` --
+  mirroring whatever dedup guarantee your build-time path makes.
+- **The `OnFrame` reapplication specifically**, to lock in the gotcha above as
+  a regression test: call `Instantiate`, then manually reset the proxy's
+  materials back to the original's (simulating what `OnPreFrame` does every
+  frame), call `node.OnFrame(original, proxy)`, and assert the converted
+  materials are back. A test that only checks the state right after
+  `Instantiate` will pass even with the `OnFrame` bug, since the bug only
+  manifests on the *next* simulated frame.
+- If you added `ObjectRegistry.RegisterReplacedObject` to the shared core,
+  confirm it actually registers under preview too: wrap the `Instantiate` call
+  in `using (new ObjectRegistryScope(new ObjectRegistry(null)))` and assert
+  `ObjectRegistry.GetReference(convertedObject).Object == original`.
+
+None of this replaces opening a real scene and watching NDMF Preview update
+the Scene view live -- see `testing.md`'s "verify by hand" section, which
+applies here at least as much as it does to the build-time path. A filter can
+pass every unit test above and still do nothing visible if, for instance, the
+shader it targets isn't actually imported into the test/real project
+(`Shader.Find` returning null is a silent no-op by design, not a test-visible
+failure).
