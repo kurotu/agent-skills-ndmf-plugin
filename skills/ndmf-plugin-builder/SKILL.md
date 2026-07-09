@@ -46,6 +46,19 @@ Before writing code, make sure you know:
   page you just fetched, and the exact ordering API from
   `references/api-reference.md` -- don't guess; ordering bugs are subtle and
   only surface when the *other* plugin happens to be installed.
+
+  **VRChat-specific:** For VRChat avatars NDMF splits its VRCSDK preprocessor
+  callbacks; when VRCFury is installed, its hook (roughly -10000) runs
+  *between* the Transforming and Optimizing phases (NDMF callback orders -11000
+  and -1025). Entering
+  Play mode for a VRChat avatar also goes through the full VRCSDK preprocessor
+  chain rather than calling NDMF directly, so this sandwich ordering applies in
+  Play mode too. See the "VRChat build pipeline integration & VRCFury ordering"
+  section of `references/api-reference.md` before debugging any pass whose
+  behavior differs between a normal NDMF build and a VRChat build or Play mode
+  entry. When in doubt, check the installed source at
+  `Packages/nadena.dev.ndmf`; it is always authoritative over this skill's
+  summaries.
 - **What exactly gets duplicated or rewritten, and whether an animation clip
   could reference it.** If in doubt, assume yes and read the animation section
   of `references/api-reference.md`.

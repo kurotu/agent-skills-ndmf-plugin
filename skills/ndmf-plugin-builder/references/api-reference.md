@@ -154,6 +154,76 @@ clips -- see the "Why this shape of problem bites people" note in SKILL.md.
   order correctly on its own; this distinction only matters when you're
   constructing a `BuildContext` by hand in a test. See `testing.md`.)
 
+## VRChat build pipeline integration & VRCFury ordering
+
+This section applies only when building for VRChat (VRCSDK installed). It is
+essential for diagnosing **ordering bugs** or behavior that differs between a
+plain NDMF build and a VRChat SDK upload or Play mode entry.
+
+### The "VRCFury sandwich" -- split callback order
+
+NDMF registers **two** `IVRCSDKPreprocessAvatarCallback` hooks, not one:
+
+| Hook class | `callbackOrder` | Phases covered |
+|---|---|---|
+| `BuildFrameworkPreprocessHook` | `-11000` | `First` → `Transforming` |
+| `BuildFrameworkOptimizeHook` | `-1025` | `Optimizing` → `Last` |
+
+If VRCFury is installed, NDMF source documents its callback at approximately
+`-10000` (`// Must run before -10000 (VRCFury)`), which falls between these
+two NDMF hooks. In that setup, the practical execution order for VRChat build
+and Play mode entry is:
+
+> **NDMF** (Resolving / Generating / Transforming) → **VRCFury** → **NDMF** (Optimizing / Last)
+
+Consequences:
+- Passes in `Transforming` or earlier run *before* VRCFury. They cannot see
+  VRCFury's output.
+- Passes in `Optimizing` or `Last` run *after* VRCFury. This is intentional for
+  optimizer passes that should see the fully merged avatar.
+
+Source: `Editor/VRChat/BuildFrameworkPreprocessHook.cs`.
+
+### ApplyOnPlay goes through the full VRCSDK preprocessor chain
+
+When Play mode is entered for a VRChat avatar, NDMF's `ApplyOnPlay` path calls
+`VRCBuildPipelineCallbacks.OnPreprocessAvatar(avatarGameObject)` -- **not**
+`AvatarProcessor.ProcessAvatar` directly. This triggers the full VRCSDK
+`IVRCSDKPreprocessAvatarCallback` chain, so all the phase ordering above applies
+in Play mode too (VRCFury and other VRCSDK preprocessors participate).
+
+NDMF also replicates the VRCSDK clone/original naming convention at this point:
+it temporarily renames the avatar to `"(Clone)"` and creates a short-lived fake
+original `GameObject` because some non-NDMF hooks (e.g. VRCFury) depend on that
+name pattern to distinguish the build copy from the source avatar.
+
+For non-VRChat avatars, or when VRCSDK is absent, `ApplyOnPlay` bypasses all of
+this and calls NDMF directly.
+
+Source: `Editor/ApplyOnPlay.cs`, around the `VRCAvatarDescriptor` branch.
+
+### VRCFury hack detection in `AvatarProcessor.ProcessAvatar`
+
+VRCFury occasionally calls `AvatarProcessor.ProcessAvatar` directly during its
+own processing. NDMF detects this via a stack-trace pattern check and adjusts:
+
+- **Inside VRCSDK build hooks** (normal build or Play via VRC pipeline): the
+  duplicate call is silently ignored -- NDMF will run via its own registered
+  hooks in the correct order anyway.
+- **In Play mode outside the VRCSDK hook chain** (legacy/manual path): `lastPhase`
+  is clamped to `BuildPhase.Transforming`, skipping `Optimizing` and `Last` to
+  avoid running optimizer passes before VRCFury has finished.
+
+**Practical implication for custom build scripts and tests:** calling
+`AvatarProcessor.ProcessAvatar` directly may produce different phase behavior
+depending on what else is on the call stack. When debugging order-sensitive
+behavior, verify against the installed source in
+`Packages/nadena.dev.ndmf/Editor/AvatarProcessor.cs` and
+`Editor/VRChat/BuildFrameworkPreprocessHook.cs` -- the installed code is
+authoritative over any summary in this reference file.
+
+Source: `Editor/AvatarProcessor.cs`, `IsVRCFuryHack`/`InHookExecution` block.
+
 ## Package & component conventions
 
 - Give a runtime settings component `INDMFEditorOnly` (from the
