@@ -1,0 +1,10 @@
+# Transient run artifacts: checkpoints, logs, results, reports
+*.tmp
+*log*.txt
+*-state.json
+*-state-*.json
+*-result.json
+*-result-*.json
+*improve-logs/
+eval_review.html
+__pycache__/
