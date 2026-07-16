@@ -5,7 +5,7 @@
       "id": 1,
       "name": "material-swap-plugin",
       "prompt": "Hey, I've got a Unity/VRChat avatar project. Right now I have an Editor script that walks the avatar hierarchy and directly overwrites every material using the 'MyToon' shader family -- swaps them to 'MyToonOutlineVariant' and tweaks a couple of properties, editing the actual .mat assets in place. A friend told me I should turn this into a proper NDMF plugin instead so it doesn't touch my source assets and only applies at build time. Can you write me an NDMF plugin (Runtime + Editor asmdefs, a settings component the user adds to the avatar, and the pass) that does this conversion non-destructively? It needs to run after Modular Avatar if that's installed. Also, some of my outfit toggle animations swap this material via the FX layer, so make sure those still work correctly after conversion.",
-      "expected_output": "An NDMF plugin package (Runtime settings component + Editor Plugin<T>/Pass<T>) that clones MyToon materials (never mutates the originals), swaps them to MyToonOutlineVariant on the clones, reassigns renderer references, rewrites FX-layer animation object-reference curves to the same clones (with a de-duplicating cache so a shared material maps to one clone), registers replacements via ObjectRegistry, saves new assets via AssetSaver, runs in Transforming phase with AfterPlugin(\"nadena.dev.modular-avatar\"), and reports failures via ErrorReport rather than throwing.",
+      "expected_output": "An NDMF plugin package (Runtime settings component + Editor Plugin<T>/Pass<T>) that clones MyToon materials (never mutates the originals), swaps them to MyToonOutlineVariant on the clones, reassigns renderer references, rewrites FX-layer animation object-reference curves to the same clones (with a de-duplicating cache so a shared material maps to one clone), registers replacements via ObjectRegistry (relying on NDMF's automatic end-of-build serialization to persist the wired-in clones, rather than reflexively calling AssetSaver), runs in Transforming phase with AfterPlugin(\"nadena.dev.modular-avatar\"), and reports failures via ErrorReport rather than throwing.",
       "files": [],
       "assertions": [
         "Declares a Plugin<T> subclass with an overridden Configure() method that registers a pass in BuildPhase.Transforming",
@@ -13,8 +13,8 @@
         "Clones the material (e.g. `new Material(original)`) rather than mutating the original material asset in place",
         "Uses a de-duplicating cache (e.g. a Dictionary keyed by the original material) so the same source material maps to one clone",
         "Rewrites FX-layer animation object-reference curves that reference the swapped material (not just the live renderer reference), e.g. via AnimationIndex.RewriteObjectCurves or equivalent, with a [DependsOnContext(typeof(AnimatorServicesContext))] or WithRequiredExtension activation",
-        "Calls AssetSaver.SaveAsset for newly created materials",
         "Calls ObjectRegistry.RegisterReplacedObject when swapping a material reference",
+        "Does not reflexively call AssetSaver.SaveAsset for the cloned materials (they're wired into a live renderer reference and animation curves, so NDMF's automatic end-of-build serialization already persists them)",
         "Uses ErrorReport for recoverable failures (e.g. missing target shader) instead of throwing an exception that would abort the whole build",
         "Settings component implements INDMFEditorOnly rather than a hand-rolled #if VRC_SDK guard"
       ]

@@ -55,11 +55,40 @@ Inside `Configure()`:
 - `T Extension<T>()` -- fetch an active extension context. Throws if the
   context isn't active, so pair it with `[DependsOnContext]` on your pass (or
   explicit activation -- see below).
-- `IAssetSaver AssetSaver` -- call `AssetSaver.SaveAsset(newObject)` for every
-  new `UnityEngine.Object` you create (materials, clips, textures, ...).
-  Prefer this over writing into `AssetContainer` directly; it's the
-  documented, idiomatic entry point for "this new object should persist in the
-  build output."
+- `IAssetSaver AssetSaver` -- explicit persistence for a newly created
+  `UnityEngine.Object`. **Usually unnecessary.** Once all passes have run,
+  `BuildContext.Finish()` walks every object transitively reachable from the
+  avatar root (component references, material texture slots, animation
+  object-reference curves, animator-graph structure) and persists anything
+  not already persistent, through the same container machinery `SaveAsset`
+  itself uses -- so an object you clone and wire into a live reference or
+  animation curve (the common-patterns.md recipe) gets saved automatically
+  with no extra call. Call `AssetSaver.SaveAsset(newObject)` yourself only
+  when:
+  - the object must already register as persistent (`EditorUtility.IsPersistent`)
+    *before* the build finishes -- unlike the raw-file-I/O case in the gotcha
+    below, `SaveAsset` doesn't hit the deferred-reimport problem: it calls
+    `AssetDatabase.AddObjectToAsset` into an already-created container asset,
+    a direct API mutation of the in-memory asset graph, not a file write that
+    Unity has to notice and reimport, so `IsPersistent`/`GetAssetPath` become
+    valid right away. The on-disk flush is still deferred to `Serialize()`'s
+    checkpoint, and that *does* block same-session path-based loads --
+    `AssetDatabase.LoadAssetAtPath` for that path still returns `null` right
+    after `SaveAsset` returns, even though `GetAssetPath` already reports a
+    non-empty path (true both via `AvatarProcessor.ManualProcessAvatar` and
+    via Play Mode entry). If your pass needs to read the object back right
+    away, keep using the object reference you already hold; don't round-trip
+    it through `GetAssetPath` + `LoadAssetAtPath`;
+  - it must ship in the build output but is intentionally not reachable from
+    the avatar root by design (rare); or
+  - it's reachable only through an edge the traversal doesn't follow for
+    performance reasons -- e.g. an `AnimationEvent`'s object parameter, or a
+    `Material`'s shader/parent reference (only its texture slots are walked).
+
+  Don't call it reflexively "just in case": an object that never ends up
+  wired to anything the avatar actually uses is a wiring bug, and `SaveAsset`
+  doesn't fix that bug -- it just makes the orphan also persist as inert,
+  unused data in the asset container.
 - `ObjectRegistry` -- call the static
   `ObjectRegistry.RegisterReplacedObject(oldObj, newObj)` whenever you swap one
   asset for another, so NDMF, other plugins, and the error-reporting UI can
@@ -72,6 +101,59 @@ Inside `Configure()`:
   `nadena.dev.ndmf.vrchat` assembly) is the current way to get the avatar's
   `VRCAvatarDescriptor` -- the older `context.AvatarDescriptor` property is
   obsolete.
+
+### Gotcha: asset import is batched (`AssetDatabase.StartAssetEditing`) during parts of a build
+
+NDMF wraps some of its own asset writes in `AssetDatabase.StartAssetEditing()`
+/ `StopAssetEditing()` -- e.g. internally when the animator-services layer
+serializes rewritten `AnimatorController`s back to disk, and across the
+*entire* pass pipeline when a user triggers a manual test bake via the NDMF
+menu (`AvatarProcessor.ManualProcessAvatar`). It also exposes this as a public
+API, `context.OpenSerializationScope()`, for a pass that wants to batch a lot
+of its own asset writes.
+
+While such a scope is open, Unity defers automatic asset re-import. If a pass
+writes a new asset via raw file I/O (`File.WriteAllBytes` +
+`AssetDatabase.ImportAsset(path)`) and then immediately tries to
+`AssetDatabase.LoadAssetAtPath<T>(path)` the same asset, it can get back
+`null` -- the import doesn't actually happen until the outermost
+`StopAssetEditing()` runs, which may be well after your pass returns. This is
+one more reason to prefer `context.AssetSaver.SaveAsset(newObject)` (an
+in-memory object, no file round-trip) over creating an asset by writing a file
+and reimporting it.
+
+This compounds with the auto-save behavior noted above: new objects only
+become persistent assets at specific checkpoints, not continuously, via
+`BuildContext.Serialize()` (public, despite the name it's not purely internal
+plumbing). NDMF guarantees it runs once at the very end of the whole build
+(`Finish()` calls it), but in a VRChat build it *also* runs mid-build --
+`BuildFrameworkPreprocessHook` calls `context.Serialize()` right after the
+Transforming phase, before VRCFury and before Optimizing (see the "VRChat
+build pipeline integration" section below). So a VRChat-build Optimizing-phase
+pass *can* see a Transforming-phase pass's objects as persistent already, but
+nothing earlier in the same phase-group can rely on that, and non-VRChat
+builds (including a manual test bake) only get the one checkpoint at the very
+end. This is the automatic, reachability-based path -- if you're relying on
+it (i.e. you didn't call `AssetSaver.SaveAsset` yourself), don't write code
+that depends on `AssetDatabase.GetAssetPath`/`LoadAssetAtPath` succeeding for
+an object your own pass just created; persistence timing then depends on
+which build path is running. If you need it sooner, call `AssetSaver.SaveAsset`
+explicitly instead of working around the timing (see above).
+
+If your own pass does need to batch many of its own writes for performance,
+prefer `context.OpenSerializationScope()` over calling
+`AssetDatabase.StartAssetEditing()`/`StopAssetEditing()` yourself: it's
+exception-safe (`IDisposable`, so `StopAssetEditing` still runs if your code
+throws) and it collapses redundant Start/Stop pairs when nested inside
+another already-open `OpenSerializationScope()`. That said, its tracking only
+sees other `OpenSerializationScope()` calls -- NDMF itself calls the raw
+`AssetDatabase.StartAssetEditing`/`StopAssetEditing` API directly in a few
+other places (`ManualProcessAvatar`, `AssetSaver`'s own internals), and those
+aren't visible to it either; they simply nest safely because Unity's
+Start/Stop pairing is itself reentrant. The actual hazard with calling the raw
+API yourself is an *unbalanced* call -- a `StartAssetEditing` without a
+`finally`-guaranteed `StopAssetEditing` can leave asset importing stalled for
+the rest of the Editor session.
 
 ## Animation-safe editing -- `nadena.dev.ndmf.animator`
 

@@ -19,9 +19,17 @@ The shape of almost every "convert X" NDMF pass is:
    place -- part of the point of choosing NDMF over an in-place editor script
    is that the source asset stays exactly what the user sees in the Project
    window after a build.
-3. Call `context.AssetSaver.SaveAsset(clone)` and
-   `ObjectRegistry.RegisterReplacedObject(original, clone)` for every clone
-   you create -- see `api-reference.md`.
+3. Call `ObjectRegistry.RegisterReplacedObject(original, clone)` for every
+   clone you create -- see `api-reference.md`. You do *not* need
+   `context.AssetSaver.SaveAsset(clone)` here: because step 2 already wired
+   the clone into a live reference or animation curve, NDMF's end-of-build
+   serialization finds it via that reference and persists it automatically.
+   `SaveAsset` is for the specific situations listed under `AssetSaver` in
+   `api-reference.md` -- it is not a safety net for a clone you forgot to
+   wire in anywhere. An unreachable clone is a correctness bug (it's dead
+   weight nothing in the built avatar actually uses); calling `SaveAsset` on
+   it doesn't fix that bug, it just makes the orphan also ship as inert data
+   in the asset container.
 
 ### Gotcha: a getter that "resolves" a value doesn't tell you what was explicitly set
 
