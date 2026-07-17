@@ -49,6 +49,18 @@ does not auto-populate this from a bare `AddComponent`, you must build it
 yourself), plus a child with a `SkinnedMeshRenderer` and whatever test
 materials/blend shapes you need.
 
+**Also set `specialAnimationLayers` to a non-null (empty is fine) array.**
+Like `baseAnimationLayers`, it's `null` on a bare `AddComponent`. If you drive
+`AnimatorServicesContext` (directly or via `[DependsOnContext]`) and leave it
+`null`, the test doesn't fail where you'd expect -- it compiles, activates, and
+runs your pass fine, then throws `NullReferenceException` inside NDMF's own
+`VRChatPlatformAnimatorBindings.CommitControllers` the moment
+`context.DeactivateAllExtensionContexts()` tries to commit the virtualized
+controllers back onto the avatar (`EditLayers(vrcAvatarDescriptor
+.specialAnimationLayers)` indexes into it unconditionally, VRChat platform
+only). The stack trace points into NDMF/VRCSDK code, not your test or pass, so
+it's easy to mistake for an NDMF bug rather than an incomplete test avatar.
+
 For animation-rewriting tests, build an `AnimatorController` in memory
 (`new AnimatorController()`, `.AddLayer("...")`, a state whose `motion` is an
 `AnimationClip`), and set object-reference or float curves on it directly

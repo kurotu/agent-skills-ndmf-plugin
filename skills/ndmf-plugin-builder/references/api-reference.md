@@ -55,6 +55,15 @@ Inside `Configure()`:
 - `T Extension<T>()` -- fetch an active extension context. Throws if the
   context isn't active, so pair it with `[DependsOnContext]` on your pass (or
   explicit activation -- see below).
+- `T GetState<T>()` / `GetState<T>(Func<BuildContext, T> init)` -- lazily
+  creates (on first call) and returns a single instance of `T`, keyed by type,
+  that lives for the whole `BuildContext` (i.e. across every phase/pass of the
+  current build). This is the mechanism for passing data between two of your
+  own passes in different phases -- prefer it over a lambda capture or a
+  static/instance field on your `Plugin`/`Pass`, since a plugin instance can be
+  reused across multiple builds. Define your own small state class per plugin
+  (not a generic `Dictionary` or similar) so the type itself namespaces the
+  state and can't collide with another plugin's call to `GetState`.
 - `IAssetSaver AssetSaver` -- explicit persistence for a newly created
   `UnityEngine.Object`. **Usually unnecessary.** Once all passes have run,
   `BuildContext.Finish()` walks every object transitively reachable from the
