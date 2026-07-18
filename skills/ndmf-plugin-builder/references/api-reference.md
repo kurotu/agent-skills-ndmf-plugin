@@ -5,6 +5,22 @@ generally stable across versions, but if something here doesn't match what you
 see in `Packages/nadena.dev.ndmf` (or wherever the package is vendored in the
 project), trust the installed source over this file and re-derive from there.
 
+Contents:
+
+- **Plugin & Pass registration** -- `Plugin<T>`/`Pass<T>`, phases, ordering
+  relative to other plugins
+- **BuildContext** -- what's available inside `Execute()`: `Extension<T>`,
+  `GetState<T>`, `AssetSaver` (and when it's actually needed),
+  `ObjectRegistry`, `ErrorReport`; plus a gotcha about batched asset import
+  (`StartAssetEditing`) and persistence timing
+- **Animation-safe editing** -- `AnimatorServicesContext`, rewriting object
+  and float curves, path remapping when moving/removing objects, unit-test
+  activation
+- **VRChat build pipeline integration & VRCFury ordering** -- the split
+  callback "sandwich", ApplyOnPlay, `ProcessAvatar` phase clamping
+- **Package & component conventions** -- `INDMFEditorOnly`, assembly layout,
+  destroying settings components
+
 ## Plugin & Pass registration
 
 `Plugin<T> where T : Plugin<T>, new()`:

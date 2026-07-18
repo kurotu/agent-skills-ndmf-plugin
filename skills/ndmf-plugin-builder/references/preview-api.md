@@ -12,8 +12,23 @@ actual build, while a preview filter renders a *live approximation* of that
 same transform in the Scene view without ever running a build or touching the
 real scene objects. Add this only when the user actually wants to *see* the
 transform's effect before building -- most plugins don't need it, and it's
-meaningfully more error-prone than the build-time path (see the gotcha
+meaningfully more error-prone than the build-time path (see the gotchas
 below).
+
+Contents:
+
+- **Registration** -- `.PreviewingWith(...)`, singleton filter instances
+- **The two interfaces you implement** -- `IRenderFilter` /
+  `IRenderFilterNode`
+- **The gotcha that will cost you the most time** -- materials must be
+  reapplied every frame in `OnFrame`; plus a checklist of cheaper causes to
+  rule out first
+- **The other gotcha** -- `GetTargetGroups` must exclude renderer types NDMF
+  can't proxy, or the whole filter's preview silently dies
+- **`ObjectRegistry`, `AssetSaver`, and `ErrorReport` in a preview filter** --
+  which build-time helpers carry over and which don't
+- **Testing preview filters** -- `ComputeContext` construction, the
+  `PropCache` staleness gotcha, and what's worth asserting explicitly
 
 ## Registration
 
@@ -294,7 +309,11 @@ right material":
   in the other gotcha above as a regression test. Add a renderer type NDMF
   doesn't support (e.g. `ParticleSystemRenderer`) alongside a supported one on
   the same test avatar, and assert the returned group contains the supported
-  renderer but not the unsupported one:
+  renderer but not the unsupported one. (In this sketch, `_builder` is your
+  own test-avatar builder from `testing.md`, and `FindOwnGroup` stands for a
+  small helper that calls `GetTargetGroups` -- after
+  `PropCacheDebug.InvalidateAllCaches()`, see above -- and picks out the group
+  this filter produced for the test avatar.)
 
   ```csharp
   [Test]

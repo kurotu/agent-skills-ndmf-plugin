@@ -24,12 +24,9 @@ The shape of almost every "convert X" NDMF pass is:
    `context.AssetSaver.SaveAsset(clone)` here: because step 2 already wired
    the clone into a live reference or animation curve, NDMF's end-of-build
    serialization finds it via that reference and persists it automatically.
-   `SaveAsset` is for the specific situations listed under `AssetSaver` in
-   `api-reference.md` -- it is not a safety net for a clone you forgot to
-   wire in anywhere. An unreachable clone is a correctness bug (it's dead
-   weight nothing in the built avatar actually uses); calling `SaveAsset` on
-   it doesn't fix that bug, it just makes the orphan also ship as inert data
-   in the asset container.
+   The narrow cases where `SaveAsset` *is* needed -- and why it's not a
+   safety net for a clone you forgot to wire in -- are covered under
+   `AssetSaver` in `api-reference.md`.
 
 ### Gotcha: a getter that "resolves" a value doesn't tell you what was explicitly set
 
@@ -108,14 +105,6 @@ animation clip that reference the same original resolve to the *same* clone.
 - Give it a `[HelpURL("...")]` pointing at user documentation, and
   `[DisallowMultipleComponent]` if only one instance per GameObject makes
   sense for the feature.
-- If the component's job is purely to configure a build-time transform (as
-  opposed to being a real runtime behavior VRChat itself needs), destroy it at
-  the end of the pass so it doesn't leak into the built avatar.
-- If you want field labels in a custom inspector to match an existing tool's
-  terminology -- e.g. mirroring another shader's inspector, or a convention
-  users already know from a related tool -- read that tool's actual inspector
-  source or localization files rather than inventing new wording. Users
-  transfer expectations between tools that use the same words for the same
-  concept. A `[CustomEditor]` driven by `SerializedProperty` lets you relabel
-  freely without renaming the underlying serialized fields, so existing
-  serialized data on users' avatars keeps working across the change.
+- If the component's job is purely to configure a build-time transform,
+  destroy it at the end of the pass -- see "Package & component conventions"
+  in `api-reference.md` for the reasoning and the exception.
