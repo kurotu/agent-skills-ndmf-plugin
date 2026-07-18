@@ -94,13 +94,16 @@ preview," "see it without building," or mention
 `IRenderFilter`/`RenderGroup`/`ComputeContext` -- that's NDMF Preview
 (`nadena.dev.ndmf.preview`), a separate API layered on top of the pass you
 just built, not a variant of it. Load `references/preview-api.md` before
-designing it: it covers the registration API, and in particular a
-quiet-by-design behavior (materials must be re-applied every frame in
-`IRenderFilterNode.OnFrame`, not just set once) that compiles fine, passes
-naive unit tests, and produces no error -- the only symptom is preview
-silently doing nothing. It's the single most expensive mistake to make in this
-part of NDMF, so read that section before writing the filter, not after
-debugging why nothing shows up.
+designing it: it covers the registration API, and in particular two
+quiet-by-design behaviors that compile fine, pass naive unit tests, and
+produce no error -- the only symptom in both cases is preview silently doing
+nothing. One is that materials must be re-applied every frame in
+`IRenderFilterNode.OnFrame`, not just set once; the other is that
+`GetTargetGroups` must exclude renderer types NDMF's preview proxy can't
+handle (e.g. `ParticleSystemRenderer`), or the *entire* filter's preview goes
+dark for every avatar in the scene. The two produce an identical symptom, so
+read both before writing the filter, not after debugging why nothing shows
+up.
 
 Skip this step entirely if the user only asked for the build-time transform.
 

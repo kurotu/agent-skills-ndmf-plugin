@@ -136,6 +136,74 @@ Cheaper things to rule out first, since they produce the identical symptom:
 Only after all four check out does the per-frame `OnFrame` reapplication
 become the prime suspect.
 
+## The other gotcha: `GetTargetGroups` must exclude renderer types NDMF can't proxy
+
+This is a second way for a preview filter to go completely silent, and it's
+easy to mistake for the `OnFrame` gotcha above -- same symptom ("I enabled
+preview and nothing changed"), different cause, different fix.
+
+NDMF's proxy system only knows how to build a preview proxy for
+`MeshRenderer` and `SkinnedMeshRenderer`. `ProxyObjectController
+.CreateReplacementObject` (`Packages/nadena.dev.ndmf/Editor/PreviewSystem
+/Rendering/ProxyObjectController.cs`) logs `"Unsupported renderer type: " +
+...` and returns `null` for anything else -- `ParticleSystemRenderer`,
+`TrailRenderer`, `LineRenderer`, etc. `TargetSet.ComputeGroupsForFilter`
+(`Packages/nadena.dev.ndmf/Editor/PreviewSystem/Rendering/TargetSet.cs`)
+guards against this *before* proxy creation even runs, by scanning every
+`RenderGroup` your `GetTargetGroups` returned:
+
+```csharp
+var unsupportedRenderer = groups.SelectMany(g => g.Renderers)
+    .FirstOrDefault(x => x is not MeshRenderer and not SkinnedMeshRenderer);
+if (unsupportedRenderer != null)
+{
+    Debug.LogError("[" + filter + "] Unsupported renderer " + unsupportedRenderer +
+                   " in groups: " + string.Join(", ", groups));
+    return new CachedGroups(ImmutableList<RenderGroup>.Empty);
+}
+```
+
+If even one renderer across one group is an unsupported type, **every group
+your filter returned is discarded, for every avatar in the scene** -- not
+just the group containing the offending renderer. A single
+`ParticleSystemRenderer` anywhere under one avatar silently kills preview for
+every other avatar this filter would otherwise have handled too. No
+exception is thrown and the filter isn't disabled; the only trace is a
+`Debug.LogError` that repeats on every recompute and is easy to lose among
+other Console output. This is per-filter-instance
+(`PropCache<IRenderFilter, CachedGroups>`), so it doesn't cascade to other
+plugins' preview filters -- only this filter's own preview stage goes dark.
+
+**Fix: filter renderers down to the proxy-supported types before building
+`RenderGroup`s in `GetTargetGroups`**, not after:
+
+```csharp
+var renderers = context.GetComponentsInChildren<Renderer>(avatarRoot, true)
+    // NDMF's TargetSet discards this filter's ENTIRE group set if even one
+    // returned renderer is a type it can't proxy (e.g. ParticleSystemRenderer).
+    // Exclude unsupported types here rather than letting that happen.
+    .Where(r => r is SkinnedMeshRenderer or MeshRenderer)
+    .ToArray();
+if (renderers.Length == 0) continue;
+
+groups.Add(RenderGroup.For(renderers).WithData(settings, ReferenceEquals));
+```
+
+As cheap insurance, also guard `proxy == null` wherever `IRenderFilterNode`'s
+`Instantiate`/`Refresh` consumes a `proxyPairs` pair, even though the guard
+above means that path isn't currently reachable in this NDMF version. It
+costs essentially nothing, and NDMF's own `NodeController.OnFrame` already
+guards the same way (`if (original != null && proxy.Renderer != null)`) --
+a possibly-null proxy is already part of `IRenderFilter`'s contract, and a
+future NDMF version could drop the "discard the whole group set" behavior in
+favor of excluding just the offending renderer, at which point this guard
+starts actually firing.
+
+This is a preview-only limitation. The build-time path (`Plugin<T>`/`Pass<T>`)
+never goes through the proxy system, so a `ParticleSystemRenderer` etc. is
+converted correctly in the real build output even though you can't see that
+conversion live in preview.
+
 ## `ObjectRegistry`, `AssetSaver`, and `ErrorReport` in a preview filter
 
 These three build-time-path helpers (`api-reference.md`) behave differently
@@ -222,6 +290,50 @@ right material":
   confirm it actually registers under preview too: wrap the `Instantiate` call
   in `using (new ObjectRegistryScope(new ObjectRegistry(null)))` and assert
   `ObjectRegistry.GetReference(convertedObject).Object == original`.
+- **That `GetTargetGroups` excludes renderer types NDMF can't proxy**, to lock
+  in the other gotcha above as a regression test. Add a renderer type NDMF
+  doesn't support (e.g. `ParticleSystemRenderer`) alongside a supported one on
+  the same test avatar, and assert the returned group contains the supported
+  renderer but not the unsupported one:
+
+  ```csharp
+  [Test]
+  public void GetTargetGroups_ExcludesUnsupportedRendererTypes()
+  {
+      _builder.SetBodyMaterials(_builder.CreateMaterial(_shader));
+      var particleRenderer = _builder.AddParticleRenderer("Fx", _builder.CreateMaterial(_shader));
+      _builder.AddSettings();
+
+      var group = FindOwnGroup(new ComputeContext("test"));
+
+      Assert.That(group, Is.Not.Null);
+      Assert.That(group.Renderers, Does.Contain(_builder.BodyRenderer));
+      Assert.That(group.Renderers.Contains(particleRenderer), Is.False);
+  }
+  ```
+
+  Adding a `ParticleSystem` via `AddComponent<ParticleSystem>()` makes Unity
+  attach a `ParticleSystemRenderer` automatically, which is a convenient way
+  to grow an unsupported-type renderer on a test avatar:
+
+  ```csharp
+  public ParticleSystemRenderer AddParticleRenderer(string name, Material material)
+  {
+      var go = new GameObject(name);
+      go.transform.SetParent(Root.transform, false);
+      go.AddComponent<ParticleSystem>();
+      var renderer = go.GetComponent<ParticleSystemRenderer>();
+      renderer.sharedMaterial = material;
+      return renderer;
+  }
+  ```
+
+  Watch for a NUnit overload-resolution trap here: `Does.Contain` compiles
+  against a `ParticleSystemRenderer` argument, but `Does.Not.Contain` with the
+  same argument can fail to compile (it resolves to a `string`-conversion
+  overload instead). The asymmetry -- one form compiles, the negated form
+  doesn't -- is easy to lose time to. Sidestep it entirely by asserting on
+  `.Contains(...)` directly: `Assert.That(group.Renderers.Contains(x), Is.False)`.
 
 None of this replaces opening a real scene and watching NDMF Preview update
 the Scene view live -- see `testing.md`'s "verify by hand" section, which
