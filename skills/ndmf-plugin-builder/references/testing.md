@@ -108,7 +108,10 @@ pass, beyond what automated tests cover:
    run the build (Play Mode, or a manual `AvatarProcessor.ProcessAvatar` call),
    and inspect the result -- a screenshot of the Inspector or Console is cheap
    and catches things assertions don't (e.g. a duplicated section header from
-   a `[Header]` colliding with a custom inspector's own heading).
+   a `[Header]` colliding with a custom inspector's own heading). If you need
+   to see *intermediate* state rather than just the final result -- e.g. to
+   pin down which pass in the pipeline introduces a bug -- NDMF 1.14.1+ has a
+   single-step build debugger for exactly this; see `references/debugging.md`.
 2. Run a code-review pass over the diff before calling the plugin done.
    Reviewing the diff line by line, rather than only re-reading the parts you
    already believe are correct, is what actually catches the kind of

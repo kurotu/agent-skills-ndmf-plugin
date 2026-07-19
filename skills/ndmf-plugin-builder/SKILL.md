@@ -135,3 +135,10 @@ compile fine and pass a naive test are the norm for Unity API work like this,
 not the exception: this skill's own reference material documents two bugs
 that were caught only by hands-on inspection and review, not by the initial
 implementation or first test pass.
+
+If a smoke test shows wrong output but it's unclear *where in the pipeline*
+it goes wrong -- e.g. whether it's your pass, an ordering issue with another
+plugin, or an extension-context transition -- NDMF 1.14.1+ ships a single-step
+build debugger that steps through the build one pass at a time on an isolated
+clone. See `references/debugging.md` for how to use it and a gotcha around
+its Step Back button before relying on it.
