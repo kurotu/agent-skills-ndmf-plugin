@@ -4,6 +4,9 @@ Verified against `nadena.dev.ndmf` 1.14.0. Method names and behavior are
 generally stable across versions, but if something here doesn't match what you
 see in `Packages/nadena.dev.ndmf` (or wherever the package is vendored in the
 project), trust the installed source over this file and re-derive from there.
+Several APIs described below were added at different points between 1.3.0 and
+1.14.1, not all at once -- see `references/version-compatibility.md` if the
+project's installed NDMF might be older than what this file assumes.
 
 Contents:
 
@@ -63,7 +66,8 @@ Inside `Configure()`:
   NDMF activate that extension context before your pass runs and deactivate it
   afterward automatically. This is the normal way to use the animator-services
   layer below -- see that section for the one place this attribute isn't
-  enough on its own (unit tests).
+  enough on its own (unit tests). **Version gate: 1.6.0+** -- see
+  `references/version-compatibility.md`.
 
 ## BuildContext -- what you get inside Execute()
 
@@ -81,7 +85,10 @@ Inside `Configure()`:
   (not a generic `Dictionary` or similar) so the type itself namespaces the
   state and can't collide with another plugin's call to `GetState`.
 - `IAssetSaver AssetSaver` -- explicit persistence for a newly created
-  `UnityEngine.Object`. **Usually unnecessary.** Once all passes have run,
+  `UnityEngine.Object`. **Version gate: 1.6.0+** for `IAssetSaver` itself and
+  the related `SerializationScope`/`context.OpenSerializationScope()` API
+  below -- see `references/version-compatibility.md` for what an older
+  project has instead. **Usually unnecessary.** Once all passes have run,
   `BuildContext.Finish()` walks every object transitively reachable from the
   avatar root (component references, material texture slots, animation
   object-reference curves, animator-graph structure) and persists anything
@@ -118,10 +125,12 @@ Inside `Configure()`:
   `ObjectRegistry.RegisterReplacedObject(oldObj, newObj)` whenever you swap one
   asset for another, so NDMF, other plugins, and the error-reporting UI can
   trace the replacement back to the object the user actually authored.
+  **Version gate: 1.3.0+** -- see `references/version-compatibility.md`.
 - `ErrorReport` -- report user-facing, recoverable problems via
   `ErrorReport.ReportError(localizer, severity, key, ...args)` instead of
   throwing. The build continues and the user sees a localized message in their
-  build report rather than the whole build aborting.
+  build report rather than the whole build aborting. **Version gate: 1.3.0+**
+  -- see `references/version-compatibility.md`.
 - `context.VRChatAvatarDescriptor()` (extension method from the
   `nadena.dev.ndmf.vrchat` assembly) is the current way to get the avatar's
   `VRCAvatarDescriptor` -- the older `context.AvatarDescriptor` property is
@@ -186,6 +195,11 @@ Any pass that changes materials, transforms, or other values that *could* also
 be driven by an animation must go through this layer, or it will only fix the
 static/default state and silently leave broken references inside animation
 clips -- see the "Why this shape of problem bites people" note in SKILL.md.
+
+**Version gate: `AnimatorServicesContext` and this whole layer ship in
+1.7.0+.** There is no clean equivalent on an older project -- see
+`references/version-compatibility.md` before promising this approach is
+available.
 
 - `AnimatorServicesContext` is the extension context. Get it via
   `context.Extension<AnimatorServicesContext>()` after it's active -- either
@@ -335,7 +349,9 @@ Source: `Editor/AvatarProcessor.cs`, `IsVRCFuryHack`/`InHookExecution` block.
 
 - Give a runtime settings component `INDMFEditorOnly` (from the
   `nadena.dev.ndmf` namespace) instead of hand-rolling `#if` guards around
-  VRChat's `IEditorOnly`. It derives from `IEditorOnly` only when
+  VRChat's `IEditorOnly`. **Version gate: 1.7.0+** -- see
+  `references/version-compatibility.md` for the pre-1.7.0 fallback. It derives
+  from `IEditorOnly` only when
   `NDMF_VRCSDK3_AVATARS` is defined, and is a harmless no-op interface
   otherwise -- so the same component source compiles and behaves correctly
   whether or not VRCSDK is installed in the project.

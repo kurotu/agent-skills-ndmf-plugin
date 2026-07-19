@@ -4,7 +4,9 @@ NDMF Preview is NDMF's live Scene-view preview system. Verified against
 `nadena.dev.ndmf` 1.14.0, where NDMF Preview dates to 1.5.0 (it was introduced
 whole -- there is no older, separate mechanism to fall back to). As with
 `api-reference.md`, trust the installed source under `Packages/nadena.dev.ndmf`
-over this file if they disagree.
+over this file if they disagree. See `references/version-compatibility.md` for
+the rest of the version matrix relevant to preview work (e.g. when the public
+`PropCache`/`PropCacheDebug` helpers used in testing became available).
 
 This is a separate concern from everything else in this skill: build-time
 passes (`Plugin<T>`/`Pass<T>`) transform a *copy* of the avatar during an

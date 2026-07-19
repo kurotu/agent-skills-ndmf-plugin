@@ -62,6 +62,14 @@ Before writing code, make sure you know:
 - **What exactly gets duplicated or rewritten, and whether an animation clip
   could reference it.** If in doubt, assume yes and read the animation section
   of `references/api-reference.md`.
+- **What NDMF version the project has installed** -- check
+  `Packages/nadena.dev.ndmf/package.json`'s `version` field or the Package
+  Manager window. Most of the API this skill teaches (`ErrorReport`,
+  `AnimatorServicesContext`, NDMF Preview, `IAssetSaver`, and more) was added
+  incrementally between 1.3.0 and 1.14.1, not present from day one. If there's
+  any doubt the project might be on an older release, load
+  `references/version-compatibility.md` before relying on API from
+  `references/api-reference.md` or `references/preview-api.md`.
 
 Load `references/api-reference.md` now for the confirmed API surface
 (`Plugin<T>`/`Pass<T>`, `BuildContext` members, the animator-services layer,
