@@ -27,6 +27,10 @@ Contents:
   rule out first
 - **The other gotcha** -- `GetTargetGroups` must exclude renderer types NDMF
   can't proxy, or the whole filter's preview silently dies
+- **What to `Observe` and what NDMF already tracks for you** -- renderer/
+  material/mesh state is automatic; anything else `GetTargetGroups` reads
+  outside `context.*` is not, including a trap where `GetAvatarRoots()`
+  itself won't tell you either
 - **`ObjectRegistry`, `AssetSaver`, and `ErrorReport` in a preview filter** --
   which build-time helpers carry over and which don't
 - **Testing preview filters** -- `ComputeContext` construction, the
@@ -144,7 +148,9 @@ Cheaper things to rule out first, since they produce the identical symptom:
    users can disable it per-plugin.)
 3. Does `GetTargetGroups` actually find your settings component and avatar
    root? (Log or step through it -- see the testing section below for how to
-   call it directly.)
+   call it directly.) Note that finding them once isn't the whole story: if
+   preview appears but stops reflecting later edits, that's the reactivity
+   section below ("What to `Observe`..."), not this checklist.
 4. Does your conversion logic actually succeed for the materials/values in
    question (e.g. a target shader that's missing from the project)? Test the
    core conversion logic in isolation first, the same way you would for the
@@ -220,6 +226,94 @@ This is a preview-only limitation. The build-time path (`Plugin<T>`/`Pass<T>`)
 never goes through the proxy system, so a `ParticleSystemRenderer` etc. is
 converted correctly in the real build output even though you can't see that
 conversion live in preview.
+
+## What to `Observe` and what NDMF already tracks for you
+
+Once a filter does more than just "which renderers exist in my target group,"
+two separate questions come up: what must the filter explicitly wire up
+through `context`, and what does NDMF already track without being asked?
+Getting either wrong produces the same silent-no-recompute symptom as the two
+gotchas above, for reasons specific to reactivity rather than to `OnFrame` or
+renderer types.
+
+### Already tracked for you: renderer/material/mesh state of renderers already in a group
+
+Once a renderer is part of a `RenderGroup` your filter returned, NDMF's proxy
+pipeline already watches it on your behalf. `ProxyObjectController
+.SetupRendererMonitoring` (`Packages/nadena.dev.ndmf/Editor/PreviewSystem
+/Rendering/ProxyObjectController.cs`) observes the renderer component itself,
+every entry of `sharedMaterials` plus each material's textures, and (for
+`SkinnedMeshRenderer`/`MeshRenderer`) its mesh. Any change there invalidates
+the whole preview pipeline and is reported to your node's `Refresh(proxyPairs,
+context, updatedAspects)` as the matching `RenderAspects` flag (`Mesh` /
+`Material` / `Texture` / `Shapes`) -- see
+`Packages/nadena.dev.ndmf/Editor/PreviewSystem/Rendering/ProxyPipeline.cs`,
+where each proxy's `InvalidateMonitor.Invalidates(_ctx)` feeds the
+pipeline-wide
+invalidation and `ChangeFlags` becomes the `updatedAspects` your node receives.
+Calling `context.Observe(original)` yourself in `Instantiate`/`Refresh` on top
+of this doesn't unlock anything you don't already get for free -- it's
+redundant, not wrong.
+
+### Not tracked unless you ask: anything `GetTargetGroups` reads outside `context.*`
+
+Reactivity only exists for what you fetch *through* `context` --
+`context.GetAvatarRoots()`, `context.GetComponent<T>(obj)`,
+`context.GetComponentsInChildren<T>(root, includeInactive)`,
+`context.Observe(obj)` -- because these are the calls that register a watcher
+as a side effect (`Packages/nadena.dev.ndmf/Editor/PreviewSystem/ComputeContext
+/SingleObjectQueries.cs`; the scene-wide queries such as `GetAvatarRoots` live
+next to it in `GlobalQueries.cs`). A plain `GetComponentInChildren<T>()` or
+`someObj.GetComponent<T>()` call anywhere inside `GetTargetGroups` is invisible
+to the pipeline: NDMF has no way to know your result depended on it, so
+adding, removing, or editing that object later never triggers a recompute --
+preview goes stale silently, the same "nothing updates" symptom as the two
+gotchas above, for a third, unrelated reason.
+
+### The trap that combines both: `GetAvatarRoots()` doesn't propagate every change under a root
+
+`context.GetAvatarRoots()` is backed by a `PropCache` compared with
+`Enumerable.SequenceEqual` on the resulting list of avatar root `GameObject`s
+(`GlobalQueries.cs`). Per `PropCache.InvalidateEntry`
+(`Packages/nadena.dev.ndmf/Editor/PreviewSystem/ComputeContext/PropCache.cs`),
+when a recompute produces a value that compares equal to the cached one, the
+cache's observer context is deliberately *not* invalidated -- by design,
+callers downstream of `GetAvatarRoots()` are told nothing changed. Adding a
+settings `MonoBehaviour` to an avatar that was already an avatar root doesn't
+change the *list of avatar roots*, so it never propagates through
+`GetAvatarRoots()` at all -- this isn't a bug, it's the whole point of the
+equality comparer, but it means depending on `GetAvatarRoots()` alone is not
+enough to react to component-level edits on an existing avatar.
+
+If `GetTargetGroups` calls `context.GetAvatarRoots()` and then locates your
+settings component with a plain Unity API call (the previous point), that
+component's changes are invisible for two independent reasons stacked
+together. Locate your own component through a context-aware call instead --
+`context.GetComponentsInChildren<YourSettings>(root, true)` or
+`context.GetComponent<YourSettings>(root)` -- which registers its own
+membership watch regardless of whether the avatar-root list itself changed.
+
+### `Observe(obj)` vs `Observe(obj, extract)`: event-driven vs. also polled
+
+Both overloads of `context.Observe` (`SingleObjectQueries.cs`) react to
+Unity's Undo/hierarchy-dirty event stream through
+`ObjectWatcher.MonitorObjectProps`
+(`Packages/nadena.dev.ndmf/Editor/ChangeStream/ObjectWatcher.cs`). Only the
+`extract` overload additionally registers with `PropertyMonitor`
+(`Packages/nadena.dev.ndmf/Editor/ChangeStream/PropertyMonitor.cs`), which
+re-checks the object on a per-frame loop while the Editor is focused (or
+animation mode is active), independent of whether an Undo-recorded event
+fired at all. This polling applies to components, materials, and other
+non-`GameObject` objects; `MonitorObjectProps` routes a `GameObject` through
+its hierarchy-event branch without ever consulting the prop monitor, so an
+`extract` observation *of a `GameObject` itself* stays event-driven despite
+the overload used. In practice: a field edited
+through the Inspector is already caught by plain `Observe(obj)`, since
+Inspector edits go through Unity's Undo system -- don't reach for the
+`extract` overload "just in case," since it adds an ongoing per-frame
+recheck. Use `Observe(obj, extract)` when the value you actually care about
+can change without an Undo event, e.g. another script writing directly to a
+field outside the normal property-drawer path.
 
 ## `ObjectRegistry`, `AssetSaver`, and `ErrorReport` in a preview filter
 
@@ -307,6 +401,18 @@ right material":
   confirm it actually registers under preview too: wrap the `Instantiate` call
   in `using (new ObjectRegistryScope(new ObjectRegistry(null)))` and assert
   `ObjectRegistry.GetReference(convertedObject).Object == original`.
+- **That `GetTargetGroups` locates your settings component through a
+  context-aware call**, not a plain `GetComponent*`, to lock in the "not
+  tracked unless you ask" gotcha above. This is awkward to assert directly
+  (the effect is an omission -- no invalidation firing -- not a return value),
+  so the practical version is a code-review check on `GetTargetGroups`
+  itself: every lookup that decides which renderers end up in a group should
+  go through `context.GetComponent<T>`/`context.GetComponentsInChildren<T>`,
+  not `GameObject.GetComponent*`. A plain call will still pass every
+  functional test run in the same synchronous method, since the component
+  already exists by the time you query for it -- the bug only shows up as a
+  live Scene view that doesn't update after adding the component to an
+  already-open scene, which unit tests don't exercise.
 - **That `GetTargetGroups` excludes renderer types NDMF can't proxy**, to lock
   in the other gotcha above as a regression test. Add a renderer type NDMF
   doesn't support (e.g. `ParticleSystemRenderer`) alongside a supported one on
