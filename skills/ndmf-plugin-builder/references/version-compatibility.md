@@ -31,9 +31,9 @@ Contents:
 ## Freshness
 
 **Last verified: 1.14.1 (2026-07-18).** There's no automation keeping this in
-sync with new NDMF releases -- whoever next touches this skill (via
-`skill-creator`, per `AGENTS.md`) should spend one glance checking whether
-that's still current before assuming the entries below cover everything:
+sync with new NDMF releases -- whoever next touches this skill should spend
+one glance checking whether that's still current before assuming the entries
+below cover everything:
 
 1. Check the latest version at
    `https://github.com/bdunderscore/ndmf/blob/main/CHANGELOG.md` (or the
