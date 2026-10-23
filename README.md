@@ -41,6 +41,10 @@ the steps in
 [skills/ndmf-plugin-builder-workspace/README.md](skills/ndmf-plugin-builder-workspace/README.md)
 (the same instruction is also recorded in `CLAUDE.md`).
 
+A weekly GitHub Actions workflow (`.github/workflows/ndmf-release-check.yml`)
+opens an issue when a new stable NDMF release is published; how to handle it
+is described under "Tracking new NDMF releases" in `AGENTS.md`.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

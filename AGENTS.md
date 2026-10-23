@@ -19,3 +19,14 @@ Use the harness in `skills/ndmf-plugin-builder-workspace/` instead (see its READ
 - `run_opt.py` — checkpointed description-optimization loop.
 
 If a run shows every query completing in a uniform ~5s, that's an error pattern (API outage/rate limit), not a real measurement.
+
+## Tracking new NDMF releases
+
+`.github/workflows/ndmf-release-check.yml` runs weekly and opens (or refreshes) an issue when a stable NDMF release newer than the `Last verified: X.Y.Z` marker in `skills/ndmf-plugin-builder/references/version-compatibility.md` is published. That marker is the single source of truth the workflow parses — keep its format intact. Prereleases are listed in the issue for reference only and never trigger it.
+
+When handling such an issue:
+
+1. Read the release notes in the issue (or the upstream `CHANGELOG.md`) for anything that changes what the skill teaches: a new API worth documenting, or an existing one deprecated, moved, or removed (see "Known breaking/removed APIs" in `version-compatibility.md` for what that looks like). Most patch releases change nothing.
+2. Before writing a version gate into the skill, confirm it against real source. Update NDMF in this Unity project (`Packages/vpm-manifest.json`) and verify empirically where behavior matters, rather than trusting the changelog wording alone.
+3. Edit the skill with `skill-creator` (see "Skill improvements" above). Bump the `Last verified` marker and the file title's version range, plus any other "1.3.0 and X.Y.Z" ranges in `SKILL.md` and `references/` if new gated APIs were added. If `SKILL.md`'s `description` changed, re-run description optimization.
+4. Even when nothing needs documenting, bump the marker so the issue doesn't come back; then close the issue from the commit (`Closes #N`).

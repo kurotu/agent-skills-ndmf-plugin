@@ -1,0 +1,109 @@
+# Opens (or refreshes) a tracking issue when a stable NDMF release newer than
+# the one the skill was last verified against is published. Detection only --
+# updating the skill is done by hand; see "Tracking new NDMF releases" in
+# AGENTS.md.
+name: NDMF release check
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # Mondays 00:00 UTC (09:00 JST)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/github-script@v7
+        env:
+          COMPAT_FILE: skills/ndmf-plugin-builder/references/version-compatibility.md
+        with:
+          script: |
+            const fs = require('fs');
+            const MARKER = '<!-- ndmf-release-check -->';
+            const UPSTREAM = { owner: 'bdunderscore', repo: 'ndmf' };
+            const MAX_BODY = 60000; // GitHub's issue body limit is 65536
+
+            const text = fs.readFileSync(process.env.COMPAT_FILE, 'utf8');
+            const m = text.match(/Last verified:\s*(\d+\.\d+\.\d+)/);
+            if (!m) {
+              core.setFailed(`No "Last verified: X.Y.Z" marker in ${process.env.COMPAT_FILE}`);
+              return;
+            }
+            const verified = m[1];
+
+            // Compares X.Y.Z[-pre]; a prerelease sorts before its release.
+            const parse = v => {
+              const [core_, pre] = v.replace(/^v/, '').split('-', 2);
+              return { nums: core_.split('.').map(Number), pre };
+            };
+            const cmp = (a, b) => {
+              const pa = parse(a), pb = parse(b);
+              for (let i = 0; i < 3; i++) {
+                const d = (pa.nums[i] || 0) - (pb.nums[i] || 0);
+                if (d) return d;
+              }
+              if (pa.pre && !pb.pre) return -1;
+              if (!pa.pre && pb.pre) return 1;
+              return (pa.pre || '').localeCompare(pb.pre || '', undefined, { numeric: true });
+            };
+
+            const releases = (await github.paginate(github.rest.repos.listReleases,
+              { ...UPSTREAM, per_page: 100 })).filter(r => !r.draft);
+            const newer = releases
+              .filter(r => !r.prerelease && cmp(r.tag_name, verified) > 0)
+              .sort((a, b) => cmp(b.tag_name, a.tag_name));
+
+            core.info(`Skill verified against ${verified}; ${newer.length} newer stable release(s).`);
+            if (newer.length === 0) return;
+
+            const latest = newer[0].tag_name.replace(/^v/, '');
+            const prereleases = releases
+              .filter(r => r.prerelease && cmp(r.tag_name, latest) > 0)
+              .sort((a, b) => cmp(b.tag_name, a.tag_name));
+
+            let body = [
+              MARKER,
+              `The \`ndmf-plugin-builder\` skill is verified against NDMF **${verified}**, ` +
+                `but **${latest}** is out (${newer.length} stable release(s) since).`,
+              '',
+              'Follow "Tracking new NDMF releases" in `AGENTS.md` to review these and ' +
+                'update the skill. Closing this issue without changes is fine if nothing ' +
+                'affects what the skill teaches -- but bump the "Last verified" marker, ' +
+                'or a new issue will be opened next week.',
+              '',
+              prereleases.length
+                ? `FYI, newer prerelease(s) also exist: ${prereleases.map(r => `[${r.tag_name}](${r.html_url})`).join(', ')}`
+                : '',
+              '',
+              '## Release notes (newest first)',
+            ].join('\n');
+            for (const r of newer) {
+              // Demote upstream headings so they nest under this release's ### heading.
+              const section = `\n\n### [${r.tag_name}](${r.html_url}) (${r.published_at.slice(0, 10)})\n\n${(r.body || '_No release notes._').trim().replace(/^#/gm, '###')}`;
+              if (body.length + section.length > MAX_BODY) {
+                body += `\n\n_Truncated -- see the [upstream changelog](https://github.com/bdunderscore/ndmf/blob/main/CHANGELOG.md) for the rest._`;
+                break;
+              }
+              body += section;
+            }
+
+            const title = `NDMF ${latest} released (skill verified against ${verified})`;
+            const issues = await github.paginate(github.rest.issues.listForRepo,
+              { ...context.repo, state: 'open', per_page: 100 });
+            const existing = issues.find(i => !i.pull_request && (i.body || '').includes(MARKER));
+
+            if (!existing) {
+              const { data } = await github.rest.issues.create({ ...context.repo, title, body });
+              core.info(`Opened #${data.number}`);
+            } else if (existing.title !== title || existing.body !== body) {
+              await github.rest.issues.update({ ...context.repo, issue_number: existing.number, title, body });
+              core.info(`Updated #${existing.number}`);
+            } else {
+              core.info(`#${existing.number} is already up to date`);
+            }

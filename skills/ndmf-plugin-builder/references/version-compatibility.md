@@ -7,50 +7,27 @@ incrementally, not present from day one -- if the project's installed NDMF
 predates an API's introduction, that API genuinely isn't there yet, and code
 written against it won't compile or won't behave as documented.
 
+**Last verified: 1.14.1 (2026-07-18).**
+
 This file's version data reflects the upstream changelog
 (`https://github.com/bdunderscore/ndmf/blob/main/CHANGELOG.md`, or the vendored
 copy at `Packages/nadena.dev.ndmf/CHANGELOG.md` if one is present in the
-project) as of **1.14.1 (2026-07-18)**. It was compiled by reading that
-changelog, not by testing every API against every version, so treat every
-version number below the same way the rest of this skill treats API names:
-as a strong lead, not an unconditional fact -- if the installed source or
-changelog disagrees with this file, trust the installed source and correct
-this file. For anything released after 1.14.1, this file will simply be
-silent on it; check the changelog directly.
+project) up to and including the release above. It was compiled by reading
+that changelog, not by testing every API against every version, so treat
+every version number below the same way the rest of this skill treats API
+names: as a strong lead, not an unconditional fact -- if the installed source
+or changelog disagrees with this file, trust the installed source. For
+anything released after the version above, this file is simply silent; if the
+project's installed NDMF is newer, skim the changelog entries in between
+before assuming an API's status hasn't changed.
 
 Contents:
 
-- **Freshness** -- how to tell if this file itself is stale, and what to do
-  about it
 - **Checking the installed version** -- where to look
 - **Feature availability** -- minimum version for each API this skill teaches,
   and what to do on an older project
 - **Known breaking/removed APIs** -- two cases where a just-added API didn't
   survive to the next patch
-
-## Freshness
-
-**Last verified: 1.14.1 (2026-07-18).** There's no automation keeping this in
-sync with new NDMF releases -- whoever next touches this skill should spend
-one glance checking whether that's still current before assuming the entries
-below cover everything:
-
-1. Check the latest version at
-   `https://github.com/bdunderscore/ndmf/blob/main/CHANGELOG.md` (or the
-   vendored `Packages/nadena.dev.ndmf/CHANGELOG.md` if it's newer than what's
-   installed here).
-2. If it's still 1.14.1, this file needs nothing.
-3. If not, skim the new entries for anything that changes what this skill
-   teaches (a new API worth adding, an existing one deprecated/moved/removed --
-   see "Known breaking/removed APIs" below for what that looks like), update
-   the relevant entry or add a new one, and bump this line plus the file's
-   title/banner version.
-
-This is a manual trigger, not a scheduled job -- it only fires when someone is
-already in here for another reason. That's a deliberate, low-overhead choice:
-NDMF ships patch releases often enough that a standing automated check would
-mostly report "nothing new," and the entries that do matter (a removed API, a
-new one worth documenting) need human judgment to write well, not just a diff.
 
 ## Checking the installed version
 
