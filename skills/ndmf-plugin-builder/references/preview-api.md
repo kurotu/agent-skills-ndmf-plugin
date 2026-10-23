@@ -22,9 +22,9 @@ Contents:
 - **Registration** -- `.PreviewingWith(...)`, singleton filter instances
 - **The two interfaces you implement** -- `IRenderFilter` /
   `IRenderFilterNode`
-- **The gotcha that will cost you the most time** -- materials must be
-  reapplied every frame in `OnFrame`; plus a checklist of cheaper causes to
-  rule out first
+- **The gotcha that will cost you the most time** -- materials (and, since
+  1.14.2, any proxy renderer property) must be reapplied every frame in
+  `OnFrame`; plus a checklist of cheaper causes to rule out first
 - **The other gotcha** -- `GetTargetGroups` must exclude renderer types NDMF
   can't proxy, or the whole filter's preview silently dies
 - **What to `Observe` and what NDMF already tracks for you** -- renderer/
@@ -94,17 +94,39 @@ registered).
 NDMF's proxy pipeline resets state every single rendered frame, before your
 filter chain runs: `ProxyObjectController.OnPreFrame()`
 (`Packages/nadena.dev.ndmf/Editor/PreviewSystem/Rendering/ProxyObjectController.cs`)
-unconditionally does `Renderer.sharedMaterials = _originalRenderer.sharedMaterials;`
-to re-mirror the proxy against the original's *current* state, and only after
-that does `ProxyPipeline.OnFrame` call each node's `OnFrame(original, proxy)`.
-This runs on every camera render (`ProxySession.OnPreCull`), not once at
-setup. So:
+re-mirrors the proxy renderer against the original's *current* state, and
+only after that does `ProxyPipeline.OnFrame` call each node's
+`OnFrame(original, proxy)`. This runs on every camera render
+(`ProxySession.OnPreCull`), not once at setup.
+
+What gets reset depends on the installed version, but materials are reset in
+all of them:
+
+- **1.14.2+**: `EditorUtility.CopySerializedIfDifferent(_originalRenderer,
+  Renderer)` -- the *entire* serialized renderer component is copied back
+  whenever the proxy differs from the original: materials, mesh, bones,
+  blend-shape weights, bounds, shadow/probe settings, and anything else
+  serialized on the renderer. Treat every property you set on the proxy
+  renderer component in `Instantiate`/`Refresh` as reverted on the next frame.
+  (For a `MeshRenderer`, the `MeshFilter`'s mesh is reset separately, every
+  frame, too.)
+- **1.14.1 and earlier** (checked against 1.14.1's source; older releases
+  may differ in detail): an explicit field-by-field copy
+  (`Renderer.sharedMaterials = _originalRenderer.sharedMaterials;` plus the
+  mesh, bones, bounds, blend-shape weights, and shadow/probe settings).
+  Renderer properties outside that list (e.g. `sortingOrder`,
+  `updateWhenOffscreen`) were *not* reset, so a filter that set one only in
+  `Instantiate` worked there and silently stops working after upgrading to
+  1.14.2+. Reapply it in `OnFrame` and it works on both.
+
+So:
 
 ```csharp
 // WRONG: this only sticks for the single frame Instantiate/Refresh ran in.
-// The very next rendered frame, OnPreFrame() resets proxy.sharedMaterials
-// back to the original, and since OnFrame is never overridden, nothing
-// reapplies the conversion -- the proxy silently reverts to the original.
+// The very next rendered frame, OnPreFrame() resets the proxy's renderer
+// state (including sharedMaterials) back to the original, and since OnFrame
+// is never overridden, nothing reapplies the conversion -- the proxy
+// silently reverts to the original.
 public Task<IRenderFilterNode> Refresh(...)
 {
     proxy.sharedMaterials = convertedMaterials;
@@ -132,6 +154,10 @@ public void OnFrame(Renderer original, Renderer proxy)
     }
 }
 ```
+
+The same pattern applies to anything else your filter changes on the proxy
+renderer (a replacement mesh, blend-shape weights, ...): compute it once,
+reapply the stored result in `OnFrame`.
 
 If preview "does nothing" and you've already ruled out the mundane causes (see
 the checklist below), suspect this first -- it's the quiet-by-design behavior

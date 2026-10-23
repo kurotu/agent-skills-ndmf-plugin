@@ -1,4 +1,4 @@
-# NDMF API Version Compatibility (1.3.0 -> 1.14.1)
+# NDMF API Version Compatibility (1.3.0 -> 1.14.8)
 
 This skill's other reference files describe the API surface as it exists in a
 recent NDMF release, but a real project can be pinned to whatever version it
@@ -7,7 +7,7 @@ incrementally, not present from day one -- if the project's installed NDMF
 predates an API's introduction, that API genuinely isn't there yet, and code
 written against it won't compile or won't behave as documented.
 
-**Last verified: 1.14.1 (2026-07-18).**
+**Last verified: 1.14.8 (2026-08-29).**
 
 This file's version data reflects the upstream changelog
 (`https://github.com/bdunderscore/ndmf/blob/main/CHANGELOG.md`, or the vendored
@@ -26,8 +26,8 @@ Contents:
 - **Checking the installed version** -- where to look
 - **Feature availability** -- minimum version for each API this skill teaches,
   and what to do on an older project
-- **Known breaking/removed APIs** -- two cases where a just-added API didn't
-  survive to the next patch
+- **Known breaking/removed APIs and behavior changes** -- cases where an API
+  or a documented behavior changed in a patch release
 
 ## Checking the installed version
 
@@ -130,12 +130,13 @@ can't use it.
 exists only so this file's feature list is complete. Don't duplicate that
 file's content here -- load it directly when the debugger itself is relevant.
 
-## Known breaking/removed APIs
+## Known breaking/removed APIs and behavior changes
 
-Two cases in NDMF's history are worth knowing about specifically because they
-show that "this API exists in version X" isn't always a stable fact even one
-patch release later -- a brand-new API can be pulled again quickly if it
-turns out to cause compatibility problems:
+These cases in NDMF's history are worth knowing about specifically because
+they show that "this API exists in version X" isn't always a stable fact even
+one patch release later -- a brand-new API can be pulled again quickly if it
+turns out to cause compatibility problems, and a patch release can change a
+signature or a behavior without the changelog calling it out:
 
 - **`IExtensionContext.Owner`** was added in 1.6.0 and removed again in 1.6.1
   (released the same day) "due to compatibility issues," per the changelog.
@@ -144,6 +145,21 @@ turns out to cause compatibility problems:
 - **`IVirtualizedMotion`** moved from NDMF's main API namespace into
   `nadena.dev.ndmf.animator` in 1.7.2 -- an explicitly semver-breaking change
   per the changelog.
+- **`ChangeNotifier.NotifyObjectUpdate(int instanceId)`** became
+  `NotifyObjectUpdate(EntityId instanceId)` in 1.14.7, as part of the Unity 6
+  support work. The changelog doesn't mention it. On Unity versions before
+  6000.2, `EntityId` is a struct NDMF defines itself
+  (`nadena.dev.ndmf.EntityId`) with an implicit conversion *to* `int` but
+  none *from* it, so existing code passing an `int` stops compiling. Pass the
+  `UnityEngine.Object` to the `NotifyObjectUpdate(Object)` overload instead,
+  which exists on both sides of the change.
+- **NDMF Preview's per-frame proxy reset got broader in 1.14.2.** The API
+  didn't change, but `ProxyObjectController.OnPreFrame()` switched from
+  copying a fixed list of renderer fields to copying the whole serialized
+  renderer component, so a proxy renderer property a filter set only once in
+  `Instantiate`/`Refresh` (one that was outside the old list) now gets reverted
+  every frame. See `preview-api.md`'s `OnFrame` gotcha for details and the
+  fix.
 
 The practical takeaway: don't assume an API is safe to depend on just because
 this file or another reference file names a version it "shipped in" -- if the
