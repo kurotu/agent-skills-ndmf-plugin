@@ -4,7 +4,7 @@
       "version": "3.10.4"
     },
     "nadena.dev.ndmf": {
-      "version": "1.14.0"
+      "version": "1.14.8"
     },
     "nadena.dev.modular-avatar": {
       "version": "1.17.1"
@@ -22,7 +22,7 @@
       }
     },
     "nadena.dev.ndmf": {
-      "version": "1.14.0",
+      "version": "1.14.8",
       "dependencies": {}
     },
     "nadena.dev.modular-avatar": {
