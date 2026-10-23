@@ -4,6 +4,14 @@
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) for all commit messages (e.g. `feat: ...`, `fix: ...`, `docs: ...`, `chore: ...`).
 
+## Line endings
+
+Never change a file's line endings. This repo mixes LF and CRLF (e.g. `Packages/vpm-manifest.json` is CRLF with no trailing newline), and there is no `.gitattributes` or `core.autocrlf` to normalize them, so whatever you write is committed byte-for-byte.
+
+- Preserve the existing line endings (and the presence or absence of a final newline) of every file you edit.
+- Don't edit files with `sed -i` or other tools that may rewrite line endings on Windows; prefer the Edit tool, or a byte-level edit (e.g. Python reading and writing in binary mode).
+- Before committing, check that `git diff --stat` touches only the lines you meant to change. A whole-file diff for a small edit means the line endings changed.
+
 ## Skill improvements
 
 When creating, editing, or improving any skill under `skills/`, use the `skill-creator` skill rather than hand-editing skill files directly.
