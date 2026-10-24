@@ -1,6 +1,7 @@
 # NDMF API Reference
 
-Verified against `nadena.dev.ndmf` 1.14.0. Method names and behavior are
+Verified against `nadena.dev.ndmf` 1.14.0, with the API names re-checked
+against 1.14.8 source. Method names and behavior are
 generally stable across versions, but if something here doesn't match what you
 see in `Packages/nadena.dev.ndmf` (or wherever the package is vendored in the
 project), trust the installed source over this file and re-derive from there.
@@ -131,11 +132,61 @@ Inside `Configure()`:
   asset for another, so NDMF, other plugins, and the error-reporting UI can
   trace the replacement back to the object the user actually authored.
   **Version gate: 1.3.0+** -- see `references/version-compatibility.md`.
-- `ErrorReport` -- report user-facing, recoverable problems via
+- `ErrorReport` -- report user-facing problems via
   `ErrorReport.ReportError(localizer, severity, key, ...args)` instead of
-  throwing. The build continues and the user sees a localized message in their
-  build report rather than the whole build aborting. **Version gate: 1.3.0+**
-  -- see `references/version-compatibility.md`.
+  throwing. **Version gate: 1.3.0+** -- see
+  `references/version-compatibility.md`.
+  - **Why not throw:** NDMF catches an exception from a pass body
+    (`BuildContext.ExecutePassBody`), reports it as an `InternalError` with a
+    raw stack trace, and moves on to the next pass. So the rest of your pass
+    never runs, including cleanup such as destroying your settings
+    component (unless it's in a `finally`), and the upload is blocked
+    anyway. Exceptions from an extension context's `OnActivate`/`OnDeactivate`
+    are different: they're rethrown and do abort the build.
+  - **Severity** (`ErrorSeverity`) decides what the user can do next.
+    `Information` and `NonFatal` show in the report but don't block anything.
+    `Error` and `InternalError` make `BuildContext.Successful` false, and the
+    VRChat build hook then blocks the upload. Use `NonFatal` for "skipped this
+    one material, the rest is fine" and `Error` for a configuration the user
+    has to fix before uploading.
+  - **`Localizer`** (`nadena.dev.ndmf.localization`). Create one per plugin and
+    keep it in a static field. The constructor that takes a lookup function is
+    the simplest:
+
+    ```csharp
+    using System;
+    using System.Collections.Generic;
+    using nadena.dev.ndmf.localization;
+
+    internal static class MyLocalization
+    {
+        private static readonly Dictionary<string, string> En = new Dictionary<string, string>
+        {
+            ["MyPlugin:ShaderMissing"] = "Shader {0} was not found",
+            ["MyPlugin:ShaderMissing:description"] = "Material {1} was left unconverted.",
+            ["MyPlugin:ShaderMissing:hint"] = "Import the shader package, then rebuild.",
+        };
+
+        public static readonly Localizer L = new Localizer("en-US",
+            () => new List<(string, Func<string, string>)>
+            {
+                ("en-US", key => En.TryGetValue(key, out var s) ? s : null),
+            });
+    }
+
+    // in a pass:
+    ErrorReport.ReportError(MyLocalization.L, ErrorSeverity.NonFatal,
+        "MyPlugin:ShaderMissing", "MyToonOutlineVariant", material);
+    ```
+
+    The other constructor, `Localizer(string, Func<List<LocalizationAsset>>)`,
+    loads Unity `LocalizationAsset`s (`.po` files) when you ship translations.
+    `key` is the title; the details and hint come from `key + ":description"`
+    and `key + ":hint"`, and both are optional. `{0}`, `{1}`, ... are filled
+    from `args` in order. A `UnityEngine.Object` in `args` also becomes a
+    clickable reference in the report. A key with no translation is shown as
+    `<key>` and nothing else complains, so check the report text once in the
+    Editor.
 - `context.VRChatAvatarDescriptor()` (extension method from the
   `nadena.dev.ndmf.vrchat` assembly) is the current way to get the avatar's
   `VRCAvatarDescriptor` -- the older `context.AvatarDescriptor` property is

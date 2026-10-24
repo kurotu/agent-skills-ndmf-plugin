@@ -15,7 +15,7 @@
         "Rewrites FX-layer animation object-reference curves that reference the swapped material (not just the live renderer reference), e.g. via AnimationIndex.RewriteObjectCurves or equivalent, with a [DependsOnContext(typeof(AnimatorServicesContext))] or WithRequiredExtension activation",
         "Calls ObjectRegistry.RegisterReplacedObject when swapping a material reference",
         "Does not reflexively call AssetSaver.SaveAsset for the cloned materials (they're wired into a live renderer reference and animation curves, so NDMF's automatic end-of-build serialization already persists them)",
-        "Uses ErrorReport for recoverable failures (e.g. missing target shader) instead of throwing an exception that would abort the whole build",
+        "Uses ErrorReport for recoverable failures (e.g. missing target shader) instead of throwing an exception (which NDMF turns into an upload-blocking InternalError with a raw stack trace, cutting the pass off halfway)",
         "Settings component implements INDMFEditorOnly rather than a hand-rolled #if VRC_SDK guard"
       ]
     },

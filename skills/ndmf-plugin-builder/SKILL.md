@@ -90,9 +90,13 @@ behavior, and guessing wrong compiles fine but breaks quietly.
    material, and rewriting animation references to match), including two
    concrete Unity API gotchas discovered the hard way: they compile fine and
    produce silently wrong output.
-4. Report problems through `ErrorReport`, not exceptions -- a thrown exception
-   aborts the *entire* avatar build for a problem the user could otherwise be
-   warned about and continue past.
+4. Report problems through `ErrorReport`, not exceptions. NDMF catches an
+   exception thrown from a pass, but that pass stops halfway, the user gets a
+   raw stack trace as an `InternalError`, and the VRChat upload is blocked,
+   even when the problem only deserved a warning. With `ErrorReport` you choose
+   the severity: `NonFatal` warns and lets the upload proceed, and `Error`
+   blocks it with a readable message. It needs a `Localizer`; see the
+   `ErrorReport` entry in `references/api-reference.md`.
 5. Leave no component you define for Avatar Optimizer (AAO, qualified name
    `"com.anatawa12.avatar-optimizer"`) to find. Do this for every plugin that
    defines a component, whether or not the user mentions AAO. AAO is
