@@ -18,16 +18,13 @@ import time
 from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parent
-SKILL_CREATOR = Path(
-    r"C:\Users\yuya-oc\.claude\plugins\cache\claude-plugins-official"
-    r"\skill-creator\unknown\skills\skill-creator"
-)
-sys.path.insert(0, str(SKILL_CREATOR))
 sys.path.insert(0, str(WORKSPACE))
 
 import win_fix
+
+sys.path.insert(0, str(win_fix.find_skill_creator()))
+
 from scripts.improve_description import improve_description
-from scripts.run_eval import find_project_root
 from scripts.run_loop import split_eval_set
 from scripts.utils import parse_skill_md
 
@@ -75,14 +72,24 @@ def eval_description(label: str, description: str, all_queries: list[dict],
             done_count = len(runs)
             log(f"{label}: run {done_count + 1}/{total_runs} "
                 f"(q{qidx} r{ridx}, expect={item['should_trigger']}): {item['query'][:50]}")
-            try:
-                triggered = win_fix.run_single_query(
-                    item["query"], skill_name, description, TIMEOUT,
-                    project_root, MODEL,
-                )
-            except Exception as e:
-                log(f"  WARNING: query failed ({e}); recording as not triggered")
-                triggered = False
+            # A failed query (API error, rate limit) is not a "not triggered"
+            # result: retry, then stop so re-running resumes from here.
+            attempts = 0
+            while True:
+                try:
+                    triggered = win_fix.run_single_query(
+                        item["query"], skill_name, description, TIMEOUT,
+                        project_root, MODEL,
+                    )
+                    break
+                except Exception as e:
+                    attempts += 1
+                    log(f"  WARNING: attempt {attempts}/5 failed: {e}")
+                    if attempts >= 5:
+                        log("  persistent errors — stopping; state is "
+                            "saved, re-run the same command to resume")
+                        sys.exit(1)
+                    time.sleep(30)
             runs[key] = triggered
             save_state(state)
 
@@ -135,7 +142,9 @@ def main() -> None:
         draft_description = DRAFT_PATH.read_text(encoding="utf-8").strip()
     else:
         draft_description = original_description
-    project_root = str(find_project_root())
+    # Not find_project_root(): from inside this repo the eval sessions would
+    # see its CLAUDE.md and the skill's own files, unlike a real user.
+    project_root = str(Path.home())
 
     state = load_state()
 
@@ -237,9 +246,12 @@ def main() -> None:
         state["iterations"].append({"description": cur["next_description"], "runs": {}})
         save_state(state)
 
-    # Final: pick best iteration by test score (ties -> earlier/shorter wins
-    # via max() keeping the first maximum)
-    best = max(state["iterations"], key=lambda it: it["test_summary"]["passed"])
+    # Final: pick best iteration by test score, breaking ties by train score
+    # (a small test split ties easily); remaining ties -> earlier/shorter wins
+    # via max() keeping the first maximum
+    best = max(state["iterations"],
+               key=lambda it: (it["test_summary"]["passed"],
+                               it["train_summary"]["passed"]))
     result = {
         "exit_reason": state["exit_reason"],
         "model": MODEL,

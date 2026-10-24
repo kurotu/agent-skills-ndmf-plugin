@@ -15,6 +15,19 @@ import uuid
 from pathlib import Path
 
 
+def find_skill_creator() -> Path:
+    """Return the installed skill-creator skill directory.
+
+    The plugin cache folder is named after the installed version (a commit
+    hash that changes on every plugin update), so read it from Claude Code's
+    plugin registry instead of hard-coding it.
+    """
+    registry = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+    plugins = json.loads(registry.read_text(encoding="utf-8"))["plugins"]
+    install = plugins["skill-creator@claude-plugins-official"][0]
+    return Path(install["installPath"]) / "skills" / "skill-creator"
+
+
 def run_single_query(
     query: str,
     skill_name: str,

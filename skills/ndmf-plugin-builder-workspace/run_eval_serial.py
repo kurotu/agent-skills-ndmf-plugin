@@ -18,15 +18,12 @@ import time
 from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parent
-SKILL_CREATOR = Path(
-    r"C:\Users\yuya-oc\.claude\plugins\cache\claude-plugins-official"
-    r"\skill-creator\unknown\skills\skill-creator"
-)
-sys.path.insert(0, str(SKILL_CREATOR))
 sys.path.insert(0, str(WORKSPACE))
 
 import win_fix
-from scripts.run_eval import find_project_root
+
+sys.path.insert(0, str(win_fix.find_skill_creator()))
+
 from scripts.utils import parse_skill_md
 
 SKILL_PATH = WORKSPACE.parent / "ndmf-plugin-builder"
@@ -59,7 +56,9 @@ def main() -> None:
 
     eval_set = json.loads(EVAL_SET_PATH.read_text(encoding="utf-8"))
     skill_name, current_description, _ = parse_skill_md(SKILL_PATH)
-    project_root = str(find_project_root())
+    # Not find_project_root(): from inside this repo the eval sessions would
+    # see its CLAUDE.md and the skill's own files, unlike a real user.
+    project_root = str(Path.home())
 
     # Always evaluate the description currently in SKILL.md ("new"). If a
     # past optimization result is around, also evaluate the
