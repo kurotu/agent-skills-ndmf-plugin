@@ -55,6 +55,11 @@ Inside `Configure()`:
     overload unless your plugin already depends on that other plugin's types
     for some other reason.
   - Mirror APIs: `.BeforePlugin(...)`, `.AfterPass(...)`, `.WaitFor(...)`.
+  - The other qualified name that comes up constantly is Avatar Optimizer's,
+    `"com.anatawa12.avatar-optimizer"`, which does its work in Optimizing. An
+    Optimizing-phase pass that removes your own components must declare
+    `.BeforePlugin("com.anatawa12.avatar-optimizer")` (SKILL.md Step 3,
+    item 5 explains why).
 
 `Pass<T> where T : Pass<T>, new()`:
 
@@ -366,4 +371,7 @@ Source: `Editor/AvatarProcessor.cs`, `IsVRCFuryHack`/`InHookExecution` block.
   whole point of NDMF is that the *avatar project* stays untouched while the
   *build output* reflects the transform -- a leftover marker component in the
   built avatar usually isn't what the user wants, unless it has a genuine
-  runtime purpose.
+  runtime purpose. A leftover is also what Avatar Optimizer flags as an
+  unknown component (SKILL.md Step 3, item 5). If the component really does
+  need to survive, register it with AAO instead; see
+  `references/aao-compatibility.md`.

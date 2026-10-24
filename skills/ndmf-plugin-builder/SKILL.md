@@ -93,6 +93,45 @@ behavior, and guessing wrong compiles fine but breaks quietly.
 4. Report problems through `ErrorReport`, not exceptions -- a thrown exception
    aborts the *entire* avatar build for a problem the user could otherwise be
    warned about and continue past.
+5. Leave no component you define for Avatar Optimizer (AAO, qualified name
+   `"com.anatawa12.avatar-optimizer"`) to find. Do this for every plugin that
+   defines a component, whether or not the user mentions AAO. AAO is
+   installed alongside a large share of NDMF tools, and its Optimizing-phase
+   pass flags every component type it doesn't recognize as *unknown*: it
+   keeps the component, keeps everything the component references, and warns
+   the user on every build. To users, that warning reads as "this tool is
+   incompatible with AAO." For a build-time settings component:
+   - Destroy it (`Object.DestroyImmediate`) on **every** exit path of the
+     pass, including the "feature disabled / nothing to do" early return.
+     That skipped early return is the usual reason a component leaks; a
+     `try`/`finally` makes the destroy unconditional.
+   - Find it with `GetComponentsInChildren<T>(true)` and destroy *every*
+     instance, so you also catch components on inactive GameObjects and
+     duplicates you ignored.
+   - If the pass runs in **Optimizing**, declare
+     `.BeforePlugin("com.anatawa12.avatar-optimizer")` (the string overload is
+     a soft dependency, safe without AAO installed). Destroying the component
+     only helps if it happens *before* AAO runs. If AAO's passes go first,
+     they have already flagged the component, and kept everything it
+     references, by the time your pass removes it. Do this even if your pass
+     happens to run first today: without a constraint, NDMF orders plugins
+     within a phase by assembly discovery order, which can change between
+     projects. Passes in earlier phases always run before AAO.
+   - `INDMFEditorOnly` does **not** hide a component from AAO. VRCSDK strips
+     `IEditorOnly` components only after NDMF's Optimizing phase has finished
+     (see `api-reference.md`'s VRChat pipeline section), so AAO still sees
+     them.
+
+   Load `references/aao-compatibility.md` only in two cases, which go beyond
+   this:
+   - The transform itself has to run **after** AAO, for example on AAO's
+     merged meshes. The component still doesn't need to survive. Split the
+     work: a pass before AAO reads the settings and destroys the component,
+     and a pass with `.AfterPlugin("com.anatawa12.avatar-optimizer")` does
+     the work.
+   - A component genuinely has to exist when AAO runs, because it does
+     something at runtime or AAO must keep objects it references alive. Then
+     register it with AAO's API.
 
 ## Step 4 -- Add NDMF Preview support (only if asked)
 
@@ -143,7 +182,11 @@ generic `dotnet test` or CLI path works for a Unity package).
 
 The last section of `testing.md` explains why a real Editor smoke test and a
 code-review pass both matter specifically for this kind of code -- do both
-before calling the plugin done, not only when something feels off. Bugs that
+before calling the plugin done, not only when something feels off. If Avatar
+Optimizer is installed, run the smoke test with `AAO Trace And Optimize` on
+the avatar, once with your feature enabled and once disabled, and confirm no
+warning names one of your component types. If it isn't installed, say the AAO
+check wasn't run; don't claim the plugin is compatible. Bugs that
 compile fine and pass a naive test are the norm for Unity API work like this,
 not the exception: this skill's own reference material documents two bugs
 that were caught only by hands-on inspection and review, not by the initial

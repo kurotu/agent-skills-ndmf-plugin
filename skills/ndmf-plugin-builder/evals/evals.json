@@ -77,6 +77,33 @@
         "Explains or accounts for the failure mode being silent (no exception or console warning when a variant ignores a shader assignment)",
         "Does not modify original.parent or otherwise mutate the original material asset"
       ]
+    },
+    {
+      "id": 6,
+      "name": "aao-unknown-component-warning",
+      "prompt": "I maintain a small NDMF plugin for VRChat avatars that merges texture atlases. Users add an `AtlasMergeSettings` component (it implements INDMFEditorOnly and has a `bool enableMerge` checkbox) to their avatar root, and my pass runs in the Optimizing phase so it sees the final materials. Several users who also have Avatar Optimizer installed are reporting a Trace and Optimize warning about an unknown component `AtlasMergeSettings` -- mostly the ones who unchecked enableMerge, but sometimes others too. Here's my pass:\n\n```csharp\nprotected override void Execute(BuildContext ctx)\n{\n    var settings = ctx.AvatarRootObject.GetComponentInChildren<AtlasMergeSettings>();\n    if (settings == null || !settings.enableMerge) return;\n    MergeAtlases(ctx, settings);\n    Object.DestroyImmediate(settings);\n}\n```\n\nand in Configure(): `InPhase(BuildPhase.Optimizing).Run(AtlasMergePass.Instance);`. How do I make this compatible with AAO properly?",
+      "expected_output": "Explains that AAO runs in the Optimizing phase and warns about (and keeps) any component it doesn't recognize, and that INDMFEditorOnly doesn't prevent this because IEditorOnly components are only stripped by the VRCSDK after NDMF's Optimizing phase. Fixes the pass so the settings component is destroyed on every exit path (including the enableMerge == false early return), finds settings components including inactive ones / duplicates, and adds .BeforePlugin(\"com.anatawa12.avatar-optimizer\") to the Optimizing-phase sequence because default order between plugins in the same phase isn't guaranteed. Does not reach for ComponentInformation registration or Asset Description, since this is a build-time-only settings component.",
+      "files": [],
+      "assertions": [
+        "Destroys the settings component even when enableMerge is false (e.g. a try/finally or destroying before the early return), not only after a successful merge",
+        "Adds .BeforePlugin(\"com.anatawa12.avatar-optimizer\") (string overload) to the Optimizing-phase sequence",
+        "Explains that INDMFEditorOnly / IEditorOnly does not stop AAO from seeing the component during the Optimizing phase",
+        "Searches for settings components including inactive GameObjects (GetComponentsInChildren<T>(true) or equivalent) and removes every instance, not just the first",
+        "Recommends removing the component rather than registering it via ComponentInformation or Asset Description as the primary fix for a build-time-only settings component"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "optimizing-plugin-no-aao-mention",
+      "prompt": "I want a small NDMF plugin for my VRChat avatars that strips unused shape keys at build time to cut file size. Users put a `ShapeKeyStripper` component anywhere on their avatar; it has a `bool active` checkbox and a `List<string> keepNames` of blend shapes that must never be removed. The pass should go through every SkinnedMeshRenderer, find blendshapes that are zero-weight and not referenced by any animation, and remove them from a copy of the mesh (don't touch the original mesh asset). Since it should see the final avatar after everything else has run, put it in the Optimizing phase. Please write the Runtime component, the Editor plugin + pass, and the asmdefs.",
+      "expected_output": "Without the user mentioning Avatar Optimizer, the plugin still leaves no ShapeKeyStripper component for AAO to flag as unknown: every instance (including on inactive GameObjects) is destroyed on every exit path, including when `active` is false, and the Optimizing-phase sequence declares .BeforePlugin(\"com.anatawa12.avatar-optimizer\"). No AAO API registration or AAO asmdef reference is added for this build-time-only component.",
+      "files": [],
+      "assertions": [
+        "Declares .BeforePlugin(\"com.anatawa12.avatar-optimizer\") (string overload) on the Optimizing-phase sequence",
+        "Destroys the ShapeKeyStripper component even when `active` is false (not only after a successful strip)",
+        "Finds ShapeKeyStripper components including inactive GameObjects (GetComponentsInChildren<T>(true) or equivalent) and destroys every instance",
+        "Does not add a ComponentInformation registration or an asmdef reference to com.anatawa12.avatar-optimizer.api.editor for this build-time-only component"
+      ]
     }
   ]
 }
