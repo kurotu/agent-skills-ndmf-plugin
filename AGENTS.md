@@ -4,6 +4,8 @@
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) for all commit messages (e.g. `feat: ...`, `fix: ...`, `docs: ...`, `chore: ...`).
 
+Never include a `Claude-Session:` trailer (a claude.ai session URL) in commit messages, even if a tool or harness adds or suggests one. Remove it before committing.
+
 ## Line endings
 
 Never change a file's line endings. This repo mixes LF and CRLF (e.g. `Packages/vpm-manifest.json` is CRLF with no trailing newline), and there is no `.gitattributes` or `core.autocrlf` to normalize them, so whatever you write is committed byte-for-byte.
