@@ -15,8 +15,9 @@ Contents:
   relative to other plugins
 - **BuildContext** -- what's available inside `Execute()`: `Extension<T>`,
   `GetState<T>`, `AssetSaver` (and when it's actually needed),
-  `ObjectRegistry`, `ErrorReport`; plus a gotcha about batched asset import
-  (`StartAssetEditing`) and persistence timing
+  `ObjectRegistry`, `ErrorReport`; plus a gotcha about the build-wide
+  `StartAssetEditing` scope (why asset-modifying `AssetDatabase` calls like
+  `CopyAsset` don't belong in a pass) and persistence timing
 - **Animation-safe editing** -- `AnimatorServicesContext`, rewriting object
   and float curves, path remapping when moving/removing objects, unit-test
   activation
@@ -113,8 +114,9 @@ Inside `Configure()`:
     checkpoint, and that *does* block same-session path-based loads --
     `AssetDatabase.LoadAssetAtPath` for that path still returns `null` right
     after `SaveAsset` returns, even though `GetAssetPath` already reports a
-    non-empty path (true both via `AvatarProcessor.ManualProcessAvatar` and
-    via Play Mode entry). If your pass needs to read the object back right
+    non-empty path (true both inside the build-wide `StartAssetEditing`
+    scope, via `AvatarProcessor.ManualProcessAvatar`, and without it, via
+    Play Mode entry). If your pass needs to read the object back right
     away, keep using the object reference you already hold; don't round-trip
     it through `GetAssetPath` + `LoadAssetAtPath`;
   - it must ship in the build output but is intentionally not reachable from
@@ -192,25 +194,62 @@ Inside `Configure()`:
   `VRCAvatarDescriptor` -- the older `context.AvatarDescriptor` property is
   obsolete.
 
-### Gotcha: asset import is batched (`AssetDatabase.StartAssetEditing`) during parts of a build
+### Gotcha: the whole build is meant to run inside `AssetDatabase.StartAssetEditing`
 
-NDMF wraps some of its own asset writes in `AssetDatabase.StartAssetEditing()`
-/ `StopAssetEditing()` -- e.g. internally when the animator-services layer
-serializes rewritten `AnimatorController`s back to disk, and across the
-*entire* pass pipeline when a user triggers a manual test bake via the NDMF
-menu (`AvatarProcessor.ManualProcessAvatar`). It also exposes this as a public
-API, `context.OpenSerializationScope()`, for a pass that wants to batch a lot
-of its own asset writes.
+**Intended behavior:** NDMF means for the entire pass pipeline to run inside a
+single `AssetDatabase.StartAssetEditing()` / `StopAssetEditing()` pair.
 
-While such a scope is open, Unity defers automatic asset re-import. If a pass
-writes a new asset via raw file I/O (`File.WriteAllBytes` +
-`AssetDatabase.ImportAsset(path)`) and then immediately tries to
-`AssetDatabase.LoadAssetAtPath<T>(path)` the same asset, it can get back
-`null` -- the import doesn't actually happen until the outermost
-`StopAssetEditing()` runs, which may be well after your pass returns. This is
-one more reason to prefer `context.AssetSaver.SaveAsset(newObject)` (an
-in-memory object, no file round-trip) over creating an asset by writing a file
-and reimporting it.
+**What NDMF actually does (checked in 1.14.8):** only the manual bake
+(NDMF's "Manual bake avatar" menu item, i.e.
+`AvatarProcessor.ManualProcessAvatar`) wraps the whole pipeline that way.
+Every other entry point -- Play Mode entry, the VRChat SDK build hook, a
+direct `AvatarProcessor.ProcessAvatar` call -- runs passes *outside* any such
+scope, and only batches inside NDMF's own saving code (`AssetSaver`,
+`context.OpenSerializationScope()`, the animator-services commit). The NDMF
+maintainers treat that as a bug in those paths, not as a second supported
+mode
+([bdunderscore/ndmf#816](https://github.com/bdunderscore/ndmf/issues/816),
+[#817](https://github.com/bdunderscore/ndmf/issues/817)). Both issues were
+still open at the time of writing and closing them may affect existing
+plugins, so don't assume which version fixes it, or where. To see what the
+installed version does, search its source for `StartAssetEditing` call sites
+outside `ManualProcessAvatar`.
+
+**What this means for a pass:** write it to be correct under the intended
+behavior, and treat the manual bake as the reference run.
+
+- Don't call asset-modifying `AssetDatabase` APIs directly from a pass; go
+  through `AssetSaver` instead. NDMF's best-practices page ("Don't call
+  AssetDatabase.SaveAssets or related methods during builds") rules out
+  `AssetDatabase.SaveAssets`, `Refresh`, and anything else that triggers
+  asset saving, because temporary build assets may still reference
+  non-persisted objects mid-build and saving can corrupt them. A
+  contributor's comment on #816 extends the same reasoning to other
+  asset-modifying calls such as `AssetDatabase.CopyAsset`.
+- The concrete failure inside the scope: anything that needs an import to
+  finish before you read the result back by path. `CopyAsset` followed by
+  `LoadAssetAtPath<T>(newPath)`, or `File.WriteAllBytes` +
+  `AssetDatabase.ImportAsset(path)` followed by `LoadAssetAtPath`, can return
+  `null`. Unity defers the import until the outermost `StopAssetEditing()`,
+  which runs after your pass returns.
+- "It works in Play Mode" is not evidence that the code is fine. Today it
+  works there only because that path lacks the scope. If your pass touches
+  `AssetDatabase` at all, run a manual bake before trusting it.
+- Instead, work on in-memory copies and keep the references you hold. Let
+  reachability-based saving persist them (see `AssetSaver` above), or call
+  `context.AssetSaver.SaveAsset(newObject)` when you need one persistent
+  sooner. `SaveAsset` is safe inside the scope because it adds an object you
+  already hold to a container, with no import round-trip.
+  - For a self-contained asset (a `Material`, a `VRCExpressionParameters`),
+    `Object.Instantiate` the template and wire the clone in.
+  - For a graph asset (an `AnimatorController`, a `BlendTree`), don't.
+    `Instantiate` copies only the top-level object; the state machines,
+    states and blend trees underneath are still shared with the template, so
+    editing the "copy" edits the template asset. Use the NDMF animator API
+    instead (see "Animation-safe editing" below). Don't `CopyAsset` a
+    controller either: one referenced from the avatar may be non-persistent,
+    a sub-asset of a bundle, or share its asset file with other controllers,
+    so a file-level copy doesn't reliably do what you expect.
 
 This compounds with the auto-save behavior noted above: new objects only
 become persistent assets at specific checkpoints, not continuously, via
@@ -230,20 +269,32 @@ an object your own pass just created; persistence timing then depends on
 which build path is running. If you need it sooner, call `AssetSaver.SaveAsset`
 explicitly instead of working around the timing (see above).
 
-If your own pass does need to batch many of its own writes for performance,
-prefer `context.OpenSerializationScope()` over calling
-`AssetDatabase.StartAssetEditing()`/`StopAssetEditing()` yourself: it's
-exception-safe (`IDisposable`, so `StopAssetEditing` still runs if your code
-throws) and it collapses redundant Start/Stop pairs when nested inside
-another already-open `OpenSerializationScope()`. That said, its tracking only
-sees other `OpenSerializationScope()` calls -- NDMF itself calls the raw
-`AssetDatabase.StartAssetEditing`/`StopAssetEditing` API directly in a few
-other places (`ManualProcessAvatar`, `AssetSaver`'s own internals), and those
-aren't visible to it either; they simply nest safely because Unity's
-Start/Stop pairing is itself reentrant. The actual hazard with calling the raw
-API yourself is an *unbalanced* call -- a `StartAssetEditing` without a
-`finally`-guaranteed `StopAssetEditing` can leave asset importing stalled for
-the rest of the Editor session.
+A pass normally doesn't need its own `StartAssetEditing` scope, and
+`context.OpenSerializationScope()` is normally unnecessary. NDMF already
+batches the saving it does for you: the end-of-build `Serialize()` passes
+everything it found to `AssetSaver.SaveAssets`, which wraps the whole batch
+in `StartAssetEditing`. Under the intended behavior, the build-wide scope
+covers everything else too. The scope affects speed only, never correctness.
+Whether `GetAssetPath` works right after `SaveAsset` doesn't depend on it,
+and inside it a `CopyAsset`/`ImportAsset` result *stops* being readable (see
+above).
+
+The one case where it can matter today: a pass that calls
+`AssetSaver.SaveAsset` explicitly for many objects, running on a path that
+lacks the build-wide scope (Play Mode, upload). Each call made outside a
+scope then breaks up NDMF's batching
+([#817](https://github.com/bdunderscore/ndmf/issues/817); the cost is that
+issue's claim, not measured here). NDMF's own animator-services commit
+handles exactly this case by wrapping its save loop in
+`using (context.OpenSerializationScope()) { ... }`, and a pass can do the
+same as an optional optimization. Unity's Start/Stop pairs nest, so the
+scope stays harmless once the build-wide scope exists.
+
+If you do open a scope, use `OpenSerializationScope()` rather than raw
+`AssetDatabase.StartAssetEditing()`/`StopAssetEditing()`: it's `IDisposable`,
+so `StopAssetEditing` still runs if your code throws. An *unbalanced* raw
+call -- `StartAssetEditing` without a `finally`-guaranteed `StopAssetEditing`
+-- can leave asset importing stalled for the rest of the Editor session.
 
 ## Animation-safe editing -- `nadena.dev.ndmf.animator`
 

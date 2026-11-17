@@ -153,6 +153,20 @@
         "Keeps an IParameterProvider with [ParameterProviderFor(typeof(HeadpatCounter))] for the source component",
         "The Editor asmdef references nadena.dev.modular-avatar.core"
       ]
+    },
+    {
+      "id": 11,
+      "name": "copyasset-manual-bake-null",
+      "prompt": "自作NDMFプラグイン（Generatingフェーズ）で、テンプレートの AnimatorController を `AssetDatabase.CopyAsset(\"Assets/MyPlugin/Template.controller\", \"Assets/MyPlugin/Generated/\" + avatarName + \".controller\")` でコピーしてから `AssetDatabase.LoadAssetAtPath<AnimatorController>` で読み込み、BlendTree を追加して VRCAvatarDescriptor の FX レイヤーに差し込んでいます。Play Mode に入ったときは問題なく動くのに、NDMF の「Manual bake avatar」だと LoadAssetAtPath が null を返して NullReferenceException になります。これは Manual bake 側の不具合でしょうか？原因を説明して、パスのコードを直してください。",
+      "expected_output": "Explains that the manual bake's whole-pipeline StartAssetEditing scope is NDMF's intended behavior and Play Mode is the path missing it (ndmf#816/#817), so the null comes from the deferred import of the CopyAsset result. The fixed pass drops CopyAsset/LoadAssetAtPath and builds the controller as a deep in-memory copy via NDMF's animator API (not a shallow Object.Instantiate, which would edit the template), letting reachability-based saving or AssetSaver.SaveAsset persist it.",
+      "files": [],
+      "assertions": [
+        "Identifies Play Mode (not the manual bake) as the path that deviates from NDMF's intended behavior: the manual bake's build-wide StartAssetEditing scope is how every build is meant to run, so this is not a manual-bake bug",
+        "Explains the null as Unity deferring the import of the copied asset until the outermost StopAssetEditing, which runs after the pass returns",
+        "The fixed pass no longer calls AssetDatabase.CopyAsset and no longer reads the copy back via LoadAssetAtPath",
+        "The fix replaces the file copy with a deep in-memory copy of the controller graph, e.g. via NDMF's animator API (AnimatorServicesContext / CloneContext / VirtualAnimatorController); a bare Object.Instantiate of the controller does not count, since it shares sub-objects with the template",
+        "Does not propose calling StopAssetEditing, AssetDatabase.Refresh, or AssetDatabase.SaveAssets inside the pass as a workaround"
+      ]
     }
   ]
 }

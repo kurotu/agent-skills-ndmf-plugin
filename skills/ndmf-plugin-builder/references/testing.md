@@ -54,7 +54,11 @@ an error report entry the way it is in a real build.
 For a full-pipeline sanity check that exercises plugin discovery, ordering,
 and every registered pass (not just yours), use
 `AvatarProcessor.ProcessAvatar(avatarRoot)` instead of constructing a
-`BuildContext` by hand.
+`BuildContext` by hand. Neither this nor a hand-built `BuildContext` runs your
+pass inside the build-wide `AssetDatabase.StartAssetEditing` scope that NDMF
+intends every build to have (see the `StartAssetEditing` gotcha in
+`api-reference.md`). So a passing test here proves nothing about code that
+touches `AssetDatabase`; check such a pass with a manual bake instead.
 
 ## Building a minimal test avatar
 
@@ -121,8 +125,12 @@ that specific state. Two cheap habits are worth applying to any nontrivial
 pass, beyond what automated tests cover:
 
 1. Actually open a real scene with a real avatar, add your settings component,
-   run the build (Play Mode, or a manual `AvatarProcessor.ProcessAvatar` call),
-   and inspect the result -- a screenshot of the Inspector or Console is cheap
+   run the build (Play Mode, NDMF's "Manual bake avatar" menu item, or a
+   direct `AvatarProcessor.ProcessAvatar` call), and inspect the result. If
+   your pass touches `AssetDatabase`, include the manual bake: it's the only
+   one that currently runs the pipeline inside the intended build-wide
+   `StartAssetEditing` scope (see `api-reference.md`). A screenshot of the
+   Inspector or Console is cheap
    and catches things assertions don't (e.g. a duplicated section header from
    a `[Header]` colliding with a custom inspector's own heading). If you need
    to see *intermediate* state rather than just the final result -- e.g. to

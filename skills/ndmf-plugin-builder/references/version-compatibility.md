@@ -117,11 +117,13 @@ NDMF_VRCSDK3_AVATARS` / VRChat `IEditorOnly` guard that `api-reference.md`
 otherwise recommends against.
 
 **`AvatarProcessor.ManualProcessAvatar()`** -- 1.10.0+. `api-reference.md`'s
-"asset import is batched" gotcha references this method by name as one of the
-paths that opens a serialization scope across the whole pipeline; on an older
-project this specific manual-test-bake entry point doesn't exist under this
-name (there may be an older manual-bake path -- check the installed source
-and NDMF's menu items rather than assuming).
+"the whole build is meant to run inside `AssetDatabase.StartAssetEditing`"
+gotcha names this method as the entry point that wraps the whole pipeline in
+`StartAssetEditing` (the intended behavior), and treats the manual bake as
+the reference run. On an older project this entry point doesn't exist under
+this name. There may be an older manual-bake path, and it may not open that
+scope, so check the installed source and NDMF's menu items rather than
+assuming.
 
 **Publicly exposed `PropCache` / `nadena.dev.ndmf.preview.PropCacheDebug.
 InvalidateAllCaches()`** -- flagged here as 1.10.0+, per the changelog entry
