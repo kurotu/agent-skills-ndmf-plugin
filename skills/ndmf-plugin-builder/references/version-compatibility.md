@@ -55,6 +55,17 @@ replaced by another"). No fallback needed below 1.3.0 in practice -- this
 skill assumes NDMF 1.3.0+ as a baseline throughout, since that's also where
 `ErrorReport` starts existing.
 
+**Parameter introspection** (`IParameterProvider`, `[ParameterProviderFor]`,
+`ProvidedParameter`, `ParameterInfo`) -- 1.4.0+ (changelog #184: "Added a new
+API to allow NDMF plugins to declare and introspect expressions parameter
+usage"). Matching a provider through base classes and interfaces is also
+1.4.0 (#198). `ProvidedParameter.DefaultValue` came in 1.5.0 (#312), and
+`ParameterInfo.ForPreview(ComputeContext)` presumably did too: #312 added
+`ComputeContext` support to `ParameterInfo`, and `ComputeContext` itself is
+1.5.0. On a pre-1.4.0 project, skip the provider; the pass still has to write
+the Expression Parameters asset itself either way (see
+`expression-parameters.md`).
+
 **NDMF Preview framework** (`IRenderFilter`, `IRenderFilterNode`,
 `RenderGroup`, `ComputeContext`, `.PreviewingWith(...)`) -- 1.5.0+ (changelog:
 "Added a framework that can be used to override the rendering of an object

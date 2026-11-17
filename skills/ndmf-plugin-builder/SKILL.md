@@ -136,6 +136,17 @@ behavior, and guessing wrong compiles fine but breaks quietly.
    - A component genuinely has to exist when AAO runs, because it does
      something at runtime or AAO must keep objects it references alive. Then
      register it with AAO's API.
+6. If the pass adds, removes, renames, reorders, or retypes VRChat Expression
+   Parameters, load `references/expression-parameters.md` first. VRChat
+   matches synced parameters between an avatar's PC, Android, and iOS builds
+   by list position and type, and has tried matching by name. So the pass has
+   to emit an identical list, with identical names, on every build target.
+   Skipping a parameter on Android, or generating names or order that change
+   from build to build, passes every build and upload. It only breaks sync
+   between viewers on different platforms. Also declare the generated
+   parameters with NDMF's `IParameterProvider` (1.4.0+) by default, so
+   parameter-usage tools count them before the build. The file covers this,
+   and generating MA Parameters as an alternative to writing the asset.
 
 ## Step 4 -- Add NDMF Preview support (only if asked)
 
