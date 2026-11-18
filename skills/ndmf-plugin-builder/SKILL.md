@@ -66,7 +66,7 @@ Before writing code, make sure you know:
   `Packages/nadena.dev.ndmf/package.json`'s `version` field or the Package
   Manager window. Most of the API this skill teaches (`ErrorReport`,
   `AnimatorServicesContext`, NDMF Preview, `IAssetSaver`, and more) was added
-  incrementally between 1.3.0 and 1.14.1, not present from day one. If there's
+  incrementally between 1.3.0 and 1.15.0, not present from day one. If there's
   any doubt the project might be on an older release, load
   `references/version-compatibility.md` before relying on API from
   `references/api-reference.md` or `references/preview-api.md`.
@@ -170,7 +170,9 @@ settings component, found via a raw lookup after `context.GetAvatarRoots()`
 it changes (preview renders once, then goes stale -- or never appears at
 all, if the component was added after the first compute). All three look the
 same from the Scene view, so read the whole file before writing the filter,
-not after debugging why nothing shows up.
+not after debugging why nothing shows up. If the preview has to move, scale,
+or rotate a bone, or rebind a renderer to another bone, also load
+`references/shadow-bones.md` (NDMF 1.15.0+).
 
 Skip this step entirely if the user only asked for the build-time transform.
 

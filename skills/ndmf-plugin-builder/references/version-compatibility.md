@@ -1,4 +1,4 @@
-# NDMF API Version Compatibility (1.3.0 -> 1.14.8)
+# NDMF API Version Compatibility (1.3.0 -> 1.15.0)
 
 This skill's other reference files describe the API surface as it exists in a
 recent NDMF release, but a real project can be pinned to whatever version it
@@ -7,7 +7,7 @@ incrementally, not present from day one -- if the project's installed NDMF
 predates an API's introduction, that API genuinely isn't there yet, and code
 written against it won't compile or won't behave as documented.
 
-**Last verified: 1.14.8 (2026-08-29).**
+**Last verified: 1.15.0 (2026-11-18).**
 
 This file's version data reflects the upstream changelog
 (`https://github.com/bdunderscore/ndmf/blob/main/CHANGELOG.md`, or the vendored
@@ -143,6 +143,32 @@ can't use it.
 exists only so this file's feature list is complete. Don't duplicate that
 file's content here -- load it directly when the debugger itself is relevant.
 
+**Shadow bones for preview** (`PreviewContext`, `IShadowBoneManagerHandle`
+with `GetBone`/`ReplaceBone`, `ShadowBoneTestFixture`) -- 1.15.0+
+(changelog #839 "Added ShadowBoneManager"; the public entry point is
+`PreviewContext.Instance.ShadowBoneManager`, while the `ShadowBoneManager`
+class itself stays `internal`). Releases before 1.15.0 had an internal
+shadow-bone class that plugins couldn't use, so there's no fallback for
+previewing a bone change below 1.15.0. Details are in `shadow-bones.md`.
+
+**`IParameterProvider.ObserveDependencies(ComputeContext)`** -- 1.15.0+,
+a default (no-op) interface member. Declaring it on a provider also compiles
+against older NDMF (it's just never called there), down to 1.5.0 where
+`ComputeContext` appears. See `expression-parameters.md`.
+
+**`ProvidedParameter.NumericBitWidth` / `Signedness` / `LerpDuration`,
+`ParameterSignedness`, and the matching `ParameterInfo.ConflictType` values**
+-- 1.15.0+ (changelog #861 "Support advanced features of ExpressionsParameter
+on IParameterProvider"). NDMF's built-in avatar-descriptor provider fills
+them from the existing Expression Parameters asset only when
+`com.vrchat.avatars` is 3.10.6 or later (asmdef define
+`NDMF_VRCSDK3_AVATARS_PARAMETER_ADVANCED_FEATURES`). On an older SDK they
+stay unset for those entries. The SDK side (`Parameter.bitWidth`,
+`flippedRepresentation`, `useCustomLerpDuration`, `customLerpDuration`) is
+itself new in VRChat SDK 3.10.6. That release also makes hand-written
+field-by-field copies of a `Parameter` lossy. See `expression-parameters.md`,
+"Writing the asset yourself", which was checked against SDK 3.10.6.
+
 ## Known breaking/removed APIs and behavior changes
 
 These cases in NDMF's history are worth knowing about specifically because
@@ -173,6 +199,24 @@ signature or a behavior without the changelog calling it out:
   `Instantiate`/`Refresh` (one that was outside the old list) now gets reverted
   every frame. See `preview-api.md`'s `OnFrame` gotcha for details and the
   fix.
+- **NDMF Preview's component queries got narrower in 1.15.0** (#847).
+  `ComputeContext.GetComponent*`/`GetComponentsInChildren` now invalidate
+  only when the query's own result changes, not on any component
+  add/remove. A filter that only updated because some *other* component
+  change happened to invalidate it goes stale after upgrading. See
+  `preview-api.md`, "Not tracked unless you ask".
+- **Preview filter exceptions are caught from 1.15.0** (#849). An exception
+  from `GetTargetGroups`, `Instantiate`, or `Refresh` (or a `null` from
+  `Instantiate`) is logged once as `Preview filter <type> failed in ...` and
+  the filter or group is skipped. Before 1.15.0 it made the pipeline rebuild
+  continuously, repeating the error. See `preview-api.md`'s checklist.
+- **`VirtualClip.SetFloatCurve` / `SetObjectCurve` validate the binding in
+  1.15.0.** They throw `ArgumentException` when `binding.type` is `null` or
+  isn't a `UnityEngine.Object` type. The changelog doesn't mention it. Before
+  1.15.0 these calls didn't reject an `EditorCurveBinding` without a `type`;
+  now they throw. Always set `type` (e.g. with
+  `EditorCurveBinding.FloatCurve(path, typeof(SkinnedMeshRenderer),
+  "blendShape.X")`).
 
 The practical takeaway: don't assume an API is safe to depend on just because
 this file or another reference file names a version it "shipped in" -- if the

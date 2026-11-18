@@ -65,9 +65,10 @@ release notes under `https://docs.vrchat.com/docs/`. The docs only talk about
 
 Given the same avatar, the pass must produce the same Expression Parameters on
 every platform build: the same entries, in the same order, with the same
-`name`, `valueType`, and `networkSynced`. If the installed VRChat SDK exposes
-per-parameter bit width or signedness (the docs describe them under "Show
-Advanced Options"), keep those identical too. The docs don't say whether
+`name`, `valueType`, and `networkSynced`. On VRChat SDK 3.10.6+, which adds
+per-parameter bit width, signedness, and lerp duration (the docs describe them
+under "Show Advanced Options"; see "Writing the asset yourself" for the
+fields), keep those identical too. The docs don't say whether
 unsynced entries count toward a synced parameter's position (the reverted
 release note's "synced parameter buffer" hints they don't, but that's not a
 guarantee), so don't reason about which entries are "safe" to vary. Keep the
@@ -172,6 +173,7 @@ internal class GlowToggleParameterProvider : IParameterProvider
 
     // RemapParameters has a default no-op body on Unity 2021+; override it only
     // if your component renames parameters for its children.
+    // ObserveDependencies (NDMF 1.15.0+) also has a no-op default; see below.
 }
 ```
 
@@ -198,6 +200,43 @@ Points that are easy to get wrong:
 - Providers are queried for components that exist at the time of the query.
   If your pass destroys its settings component (as SKILL.md Step 3 asks),
   compute everything it needs before destroying it.
+- **If the provider reads anything besides its own component** (a referenced
+  ScriptableObject or preset asset, another component, a child object),
+  implement `ObserveDependencies` (NDMF 1.15.0+) and `Observe` those objects
+  there. NDMF already observes the source component, but nothing else.
+  Without this, preview-time consumers (`ParameterInfo.ForPreview`) keep
+  showing the old parameters after the user edits the referenced asset.
+
+  ```csharp
+  public void ObserveDependencies(nadena.dev.ndmf.preview.ComputeContext context)
+  {
+      if (_component.preset != null) context.Observe(_component.preset);
+  }
+  ```
+
+  NDMF calls it before every query, from builds and `ForUI` too, where the
+  context is a no-op `ComputeContext.NullContext`. So keep it cheap and
+  side-effect free, and don't treat a call as a sign that preview is running.
+  The method is a default interface member, so declaring it compiles on
+  older NDMF as well (NDMF just never calls it there). It needs the
+  `nadena.dev.ndmf.preview` types, which exist from 1.5.0.
+- **Narrower Int/Float parameters** (NDMF 1.15.0+): `ProvidedParameter` has
+  `NumericBitWidth` (2-8, clamped; `null` means the default 8),
+  `Signedness`, and `LerpDuration` (seconds, clamped to 0-300). `BitUsage`,
+  which usage UIs add up, now follows `NumericBitWidth` for a synced
+  Int/Float. As with everything here, declaring it doesn't change the asset.
+  If your pass writes a narrower entry into Expression Parameters (the SDK
+  fields are in "Writing the asset yourself"), set the same width on the
+  provider so the estimate matches the build, and use the same width on
+  every platform (see "The rule for a pass"). If you don't narrow, leave
+  `NumericBitWidth` at `null` rather than setting 8.
+  With `com.vrchat.avatars` 3.10.6+, NDMF's built-in descriptor provider also
+  reports these options for the entries already in the user's asset. When two
+  declarations of one name disagree, the first declarer wins (the avatar
+  descriptor's asset, for a name already in it), and `ParameterInfo` reports
+  the disagreement to the `onConflict` callback as `BitWidthMismatch`,
+  `SignednessMismatch`, or `LerpDurationMismatch`. A declaration that leaves an
+  option `null` doesn't conflict; it takes the other declaration's value.
 
 ### Reading parameters back with `ParameterInfo`
 
@@ -211,7 +250,8 @@ from NDMF Preview code.
 
 It **merges** declarations by name. Only the first declarer's
 `ProvidedParameter` survives, and later ones are folded into it (types
-reconciled, sync flags combined). Two consequences:
+reconciled, sync flags combined, and from 1.15.0 the numeric options above).
+Two consequences:
 
 - Don't use it to enumerate *your own* parameters by filtering on
   `p.Plugin == YourPlugin.Instance` or `p.Source`. A name that already exists
@@ -248,6 +288,36 @@ reconciled, sync flags combined). Two consequences:
   rather than trying to detect whether an earlier pass already cloned it.
 - `parameters` is an array: build a new array and assign it rather than trying
   to grow it in place.
+- **Carry the user's existing entries over as they are** (put the same
+  `Parameter` objects from the cloned asset into the new array). Don't rebuild
+  them as `new Parameter { name = p.name, valueType = p.valueType, ... }`.
+  VRChat SDK 3.10.6 added four fields to `VRCExpressionParameters.Parameter`
+  (`bitWidth`, `flippedRepresentation`, `useCustomLerpDuration`,
+  `customLerpDuration`). A copy that lists fields by hand drops them, so the
+  user's narrowed parameters silently go back to 8 bits, their sign and lerp
+  settings are lost, and the synced-bit total changes. Code written before
+  3.10.6 still compiles, so nothing warns you.
+- **The 3.10.6 options on an entry you add** (checked against SDK 3.10.6):
+  - A new `Parameter` defaults to `bitWidth = 8`, the type's usual sign
+    (Int unsigned, Float signed), and no custom lerp. Entries in assets saved
+    before 3.10.6 also read as 8 bits. So not setting anything is safe.
+  - `bitWidth` (a `byte`) is used for Int and Float only; Bool is always 1
+    bit. The effective width (`GetBitWidthByType()`) is clamped to 2-8,
+    so `0` doesn't mean "default": it reads as 2 bits.
+  - Signedness is stored as `flippedRepresentation`, *relative to the type*:
+    `true` makes an Int signed and a Float unsigned. Read it back with
+    `GetRepresentationByType()` rather than interpreting the flag yourself.
+  - Lerp duration takes effect only with `useCustomLerpDuration = true`.
+    `GetCustomLerpDuration()` returns `null` otherwise, and clamps to 0-300
+    seconds.
+  - `VRCExpressionParameters.CalcTotalCost()` counts the narrowed width, so a
+    narrower entry also leaves more of the synced-bit budget for others.
+  - These members don't exist before SDK 3.10.6. If the plugin supports older
+    SDKs, add a `versionDefines` entry to your Editor asmdef
+    (`{"name": "com.vrchat.avatars", "expression": "3.10.6", "define":
+    "YOURPLUGIN_VRCSDK_PARAM_OPTIONS"}`) and wrap the code that sets them in
+    `#if`. NDMF's own `NDMF_VRCSDK3_AVATARS_PARAMETER_ADVANCED_FEATURES`
+    define comes from NDMF's asmdef and isn't visible in your assembly.
 - If an entry with your name already exists, reuse it instead of appending a
   duplicate. If its type differs from yours, report it through `ErrorReport`
   rather than silently retyping it.
@@ -337,7 +407,8 @@ What to watch for:
   near the code that builds the parameter list.
 - In an EditMode test (see `testing.md`), build two identical avatars, run
   the pass on each, and assert that the resulting
-  `(name, valueType, networkSynced)` lists are equal index by index. Fresh
+  `(name, valueType, networkSynced)` lists are equal index by index (on SDK
+  3.10.6+, also compare `GetBitWidthByType()` and `GetRepresentationByType()`). Fresh
   objects get fresh instance IDs, so this catches identity-based names. It
   doesn't reliably catch identity-based *ordering*: identically built avatars
   tend to get instance IDs in the same relative order. To catch that too,

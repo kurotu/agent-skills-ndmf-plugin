@@ -1,7 +1,8 @@
 # NDMF Preview (`nadena.dev.ndmf.preview`)
 
 NDMF Preview is NDMF's live Scene-view preview system. Verified against
-`nadena.dev.ndmf` 1.14.0, where NDMF Preview dates to 1.5.0 (it was introduced
+`nadena.dev.ndmf` 1.14.0 and re-checked against 1.15.0's preview changes. NDMF
+Preview dates to 1.5.0 (it was introduced
 whole -- there is no older, separate mechanism to fall back to). As with
 `api-reference.md`, trust the installed source under `Packages/nadena.dev.ndmf`
 over this file if they disagree. See `references/version-compatibility.md` for
@@ -35,6 +36,10 @@ Contents:
   which build-time helpers carry over and which don't
 - **Testing preview filters** -- `ComputeContext` construction, the
   `PropCache` staleness gotcha, and what's worth asserting explicitly
+
+If the filter has to preview a change to a **bone** (scale, position,
+rotation, or which bone a renderer follows) rather than to the renderer
+itself, also load `references/shadow-bones.md` (NDMF 1.15.0+).
 
 ## Registration
 
@@ -109,7 +114,12 @@ all of them:
   serialized on the renderer. Treat every property you set on the proxy
   renderer component in `Instantiate`/`Refresh` as reverted on the next frame.
   (For a `MeshRenderer`, the `MeshFilter`'s mesh is reset separately, every
-  frame, too.)
+  frame, too.) On **1.15.0+**, NDMF's shadow-bone system sometimes replays
+  bone references (`bones`, `rootBone`, `probeAnchor`, the proxy's parent)
+  that a filter wrote directly, but not reliably across pipeline rebuilds, so
+  still treat them as reverted. To change which bone a renderer uses on
+  1.15.0+, call `ReplaceBone` (see `shadow-bones.md`) rather than writing
+  those fields.
 - **1.14.1 and earlier** (checked against 1.14.1's source; older releases
   may differ in detail): an explicit field-by-field copy
   (`Renderer.sharedMaterials = _originalRenderer.sharedMaterials;` plus the
@@ -182,7 +192,16 @@ Cheaper things to rule out first, since they produce the identical symptom:
    core conversion logic in isolation first, the same way you would for the
    build-time path.
 
-Only after all four check out does the per-frame `OnFrame` reapplication
+5. On 1.15.0+, look in the Console for `Preview filter <YourFilterType>
+   failed in GetTargetGroups` (or `in Instantiate` / `in Refresh`). That
+   means your filter threw an exception, and the inner exception is the real
+   error. NDMF now catches it, logs it once per recompute, and moves on. An
+   exception in `GetTargetGroups` means no groups for the whole filter. An
+   exception in `Instantiate`/`Refresh`, or an `Instantiate` that returns
+   `null`, leaves that group unmodified. Before 1.15.0 the same exception
+   made the pipeline rebuild over and over and repeat the error.
+
+Only after all of these check out does the per-frame `OnFrame` reapplication
 become the prime suspect.
 
 ## The other gotcha: `GetTargetGroups` must exclude renderer types NDMF can't proxy
@@ -296,11 +315,24 @@ adding, removing, or editing that object later never triggers a recompute --
 preview goes stale silently, the same "nothing updates" symptom as the two
 gotchas above, for a third, unrelated reason.
 
+**1.15.0 narrowed what a component query reacts to.** `context.GetComponent`,
+`GetComponents`, and `GetComponentsInChildren` now invalidate only when *that
+query's own result* changes (#847). Before 1.15.0, adding or removing *any*
+component on the watched object (or, for `InChildren`, anywhere below it)
+invalidated it. A filter that queried its settings type through `context`
+but read another component with a plain `GetComponent` could still update
+by accident on older versions when that other component was added or
+removed. On 1.15.0 it goes stale. Query every component
+the result depends on through `context`, each with its own type. Also note
+that `context.GetComponent<T>` follows only the *first* matching component,
+so adding a second `T` to the same object doesn't invalidate it.
+
 ### The trap that combines both: `GetAvatarRoots()` doesn't propagate every change under a root
 
 `context.GetAvatarRoots()` is backed by a `PropCache` compared with
 `Enumerable.SequenceEqual` on the resulting list of avatar root `GameObject`s
-(`GlobalQueries.cs`). Per `PropCache.InvalidateEntry`
+(`GlobalQueries.cs`). Per `PropCache.RevalidateEntry` (named `InvalidateEntry`
+before 1.15.0, same behavior here)
 (`Packages/nadena.dev.ndmf/Editor/PreviewSystem/ComputeContext/PropCache.cs`),
 when a recompute produces a value that compares equal to the cached one, the
 cache's observer context is deliberately *not* invalidated -- by design,
@@ -389,6 +421,9 @@ of the real ones.
 one from a test assembly. `Instantiate`/`Refresh` return `Task<IRenderFilterNode>`
 and can be implemented as synchronously-completed (`Task.FromResult(...)`),
 so calling `.Result` in a test works fine without any real async machinery.
+A filter that uses `PreviewContext` (shadow bones, 1.15.0+) also needs a
+`PreviewContext` set up in the test. See the testing section of
+`shadow-bones.md`.
 
 **Gotcha: `ComputeContext.GetAvatarRoots()` (and other global scene queries)
 are cached and won't see an object your test just created.** They're backed by

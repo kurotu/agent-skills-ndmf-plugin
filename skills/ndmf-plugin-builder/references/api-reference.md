@@ -1,12 +1,12 @@
 # NDMF API Reference
 
 Verified against `nadena.dev.ndmf` 1.14.0, with the API names re-checked
-against 1.14.8 source. Method names and behavior are
+against 1.15.0 source. Method names and behavior are
 generally stable across versions, but if something here doesn't match what you
 see in `Packages/nadena.dev.ndmf` (or wherever the package is vendored in the
 project), trust the installed source over this file and re-derive from there.
 Several APIs described below were added at different points between 1.3.0 and
-1.14.1, not all at once -- see `references/version-compatibility.md` if the
+1.15.0, not all at once -- see `references/version-compatibility.md` if the
 project's installed NDMF might be older than what this file assumes.
 
 Contents:
@@ -335,7 +335,10 @@ available.
   curves, and `RewriteObjectCurves` does not touch them. `VirtualClip` (also
   under `nadena.dev.ndmf.animator`) exposes the float-curve equivalents:
   `GetFloatCurveBindings()` to enumerate, `GetFloatCurve`/`SetFloatCurve` to
-  read/replace a specific binding. If your pass fixes a value that could be
+  read/replace a specific binding. (From 1.15.0, `SetFloatCurve` and
+  `SetObjectCurve` throw `ArgumentException` when the binding's `type` is
+  unset, so build bindings with `EditorCurveBinding.FloatCurve(path, type,
+  property)`.) If your pass fixes a value that could be
   animated by a float curve (e.g. forcing a blend shape weight), you generally
   need to neutralize or remove the competing float curve too -- otherwise the
   animator will keep driving the old value at runtime and silently override
