@@ -238,6 +238,32 @@ Points that are easy to get wrong:
   `SignednessMismatch`, or `LerpDurationMismatch`. A declaration that leaves an
   option `null` doesn't conflict; it takes the other declaration's value.
 
+### Choosing a narrower width
+
+Two situations come up in practice.
+
+- **A pass that generates a selector or counter.** For example, an Int that
+  picks one of `k` outfits. The pass knows every value it will assign (menu
+  control values, animator transition conditions, parameter drivers). Use the
+  smallest width that holds all of them. VRChat's docs describe an Int as
+  "0 to 255 (8 bits, unsigned)" by default; narrowing it lowers the maximum,
+  and 2 bits is the minimum. An unsigned `n`-bit Int therefore holds
+  `0..2^n-1`, so `k` options need `max(2, ceil(log2(k)))` bits. Signed
+  "reduces the maximum value in exchange for being able to express negative
+  numbers". For a Float, narrowing "reduces the float's precision", and
+  unsigned "reduces the range of the float in exchange for higher precision"
+  (0 to 1 instead of -1 to 1). Keep the default value and every value you
+  assign inside the range the inspector label shows. VRChat's docs don't say
+  what happens to a value outside it. Compute the width from the
+  component's settings only, never from the build target ("The rule for a
+  pass").
+- **A component that lets users set these options.** Give each option a
+  "not set" state (bit width `0` / a `Default` choice / "custom lerp" off).
+  When it's not set, leave the `ProvidedParameter` property `null` and leave
+  the asset entry's field as it is. The user's own asset settings and other
+  tools' declarations then apply without being reported as conflicts. Only an
+  option the user actually set should override them.
+
 ### Reading parameters back with `ParameterInfo`
 
 `ParameterInfo.ForContext(context).GetParametersForObject(avatarRoot)` returns
@@ -366,6 +392,33 @@ var merge = holder.AddComponent<ModularAvatarMergeAnimator>();
 merge.animator = generatedFxController;    // uses the same parameter name
 holder.AddComponent<ModularAvatarMenuItem>(); // configure its Control likewise
 ```
+
+**Narrower parameters through MA Parameters (MA 1.19.0+).** From MA 1.19.0,
+`ParameterConfig` also carries the VRChat SDK 3.10.6 options, so a generated
+MA Parameters entry can narrow a parameter without touching the asset:
+
+```csharp
+new ParameterConfig
+{
+    nameOrPrefix = OutfitParameters.NameFor(selector),
+    syncType = ParameterSyncType.Int,
+    bitWidth = 3,                                     // 0 = not set (8 bits)
+    representation = ParameterRepresentation.Default, // or Unsigned / Signed
+    useCustomLerpDuration = false,                    // with customLerpDuration (seconds)
+    defaultValue = 0,
+    hasExplicitDefaultValue = true,
+};
+```
+
+These fields don't exist before MA 1.19.0. Declare `>=1.19.0` in the
+package's MA dependency, or set them only behind a version define. MA writes
+them into the asset only when the VRChat SDK is 3.10.6+. It clamps the
+default value into the narrowed range, so a 3-bit Int with a default of 20
+becomes 7 (checked with an MA 1.19.0 build). That keeps the asset valid but
+hides the mistake, so compute the width from the values you assign. MA also declares
+them through NDMF's parameter introspection, but keep your own provider's
+`NumericBitWidth` in step with what you generate (see "Keep your own
+`IParameterProvider`" below).
 
 What to watch for:
 

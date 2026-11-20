@@ -10,9 +10,11 @@ Contents:
 
 - **Version gate**
 - **What the API does**
-- **The usual shape of a filter**
+- **The usual shape of a filter** -- including shadowing the whole subtree
+- **Recipes** -- pose a bone with its children; change only one bone's own
+  vertices; snap an object to another transform
 - **Gotchas** -- absolute poses, re-requesting on every `Refresh`, where each
-  call is allowed
+  call is allowed, unshadowed descendants
 - **Testing** -- `ShadowBoneTestFixture`
 
 ## Version gate
@@ -42,7 +44,10 @@ bones.ReplaceBone(originalRenderer, originalBone, someOtherTransform);
 
 - **`GetBone(bone)`** returns a *shadow* of `bone`: a hidden `DontSave`
   transform in NDMF's preview scene (`___NDMF Preview___`). NDMF also creates
-  shadows for its ancestors, so the shadow hierarchy mirrors the original one.
+  shadows for its **ancestors**, so the shadow's world pose matches the
+  original's, but **not for its descendants**. A child bone you didn't request
+  stays the original transform under the original parent, so the vertices
+  skinned to it don't follow when you pose the shadow (gotcha 6).
   At the start of every preview frame NDMF copies each original bone's local
   position, rotation, and scale onto its shadow. Requesting a shadow also makes
   the proxies point at it instead of the original: a `SkinnedMeshRenderer`
@@ -80,15 +85,36 @@ internal class BoneScaleNode : IRenderFilterNode
 {
     private readonly List<(Transform original, Transform shadow, Vector3 scale)> _targets;
 
-    // Called from both Instantiate and Refresh. It requests every shadow again
-    // each time (see the second gotcha below).
-    internal static List<(Transform, Transform, Vector3)> RequestShadows(BoneScaleSettings s)
+    // Constructed from both Instantiate and Refresh, so every shadow is
+    // requested again each time (see the second gotcha below).
+    internal BoneScaleNode(BoneScaleSettings s, IEnumerable<(Renderer, Renderer)> proxyPairs)
     {
         var bones = PreviewContext.Instance.ShadowBoneManager;
-        return s.targets
-            .Where(t => t.bone != null)
-            .Select(t => (t.bone, bones.GetBone(t.bone), t.scale))
-            .ToList();
+        var posed = s.targets.Where(t => t.bone != null).ToList();
+        ShadowSubtrees(bones, proxyPairs, posed.Select(t => t.bone).ToList());
+        _targets = posed.Select(t => (t.bone, bones.GetBone(t.bone), t.scale)).ToList();
+    }
+
+    // Shadow every transform a renderer in the group references at or below a
+    // posed bone. Otherwise the vertices skinned to those children keep following
+    // the original (gotcha 6). The group's renderers are already monitored by
+    // NDMF, so plain reads of bones/rootBone/probeAnchor are fine here.
+    internal static void ShadowSubtrees(IShadowBoneManagerHandle bones,
+        IEnumerable<(Renderer, Renderer)> proxyPairs, IReadOnlyCollection<Transform> posed)
+    {
+        bool Affected(Transform t) => t != null && posed.Any(p => t == p || t.IsChildOf(p));
+
+        foreach (var (original, _) in proxyPairs)
+        {
+            if (original == null) continue;
+            var refs = new List<Transform> { original.transform, original.probeAnchor };
+            if (original is SkinnedMeshRenderer smr)
+            {
+                refs.AddRange(smr.bones);
+                refs.Add(smr.rootBone);
+            }
+            foreach (var t in refs.Where(Affected).Distinct()) bones.GetBone(t);
+        }
     }
 
     public void OnFrameGroup()
@@ -108,6 +134,82 @@ internal class BoneScaleNode : IRenderFilterNode
 `GetTargetGroups` still decides which renderers are in the group. Include the
 renderers that are skinned to (or sit under) the bones you change, and observe
 the settings component through `context.*` as `preview-api.md` explains.
+
+## Recipes
+
+These are the three shapes a bone-changing preview usually takes.
+
+### 1. Pose a bone together with everything under it
+
+Use this when the build changes the bone's own transform (scale, offset,
+rotation), so its children move with it. Pose the bone's shadow, and shadow
+the whole referenced subtree as `BoneScaleNode` above does. Scaling the shadow
+then scales the child bones' vertices too, the same as the build.
+
+### 2. Change only the vertices weighted to one bone, not its children
+
+Scaling a shadow also scales everything under it. To affect only the vertices
+weighted to the bone itself, give those vertices a transform of their own:
+
+```csharp
+// In the node's constructor (called from Instantiate and Refresh), after ShadowSubtrees(...):
+var node = new GameObject("[YourPlugin] scale node").transform;
+node.SetParent(bones.GetBone(bone), false);   // child of the bone's shadow, identity local pose
+_nodes.Add((node, scale));
+foreach (var (original, _) in proxyPairs)
+{
+    if (original is SkinnedMeshRenderer smr && (smr.bones.Contains(bone) || smr.rootBone == bone))
+        bones.ReplaceBone(original, bone, node);  // only this renderer's references to `bone`
+}
+
+public void OnFrameGroup()
+{
+    foreach (var (node, scale) in _nodes)
+        if (node != null) node.localScale = scale;
+}
+
+public void Dispose()
+{
+    // Your node, not NDMF's: destroy it. It can already be gone with its parent shadow.
+    foreach (var (node, _) in _nodes)
+        if (node != null) Object.DestroyImmediate(node.gameObject);
+}
+```
+
+The child bones' shadows stay under the bone's shadow, not under your node,
+so they keep their size. NDMF doesn't sync your node's pose, but write it in
+`OnFrameGroup` anyway, from settings, as an absolute value. A later `GetBone`
+of the same bone doesn't undo the `ReplaceBone` (upstream test
+`RepeatedShadowLookupDoesNotOverwriteExplicitReplacement`). Every `Refresh`
+builds a new node, so it creates its own scale nodes and the old node's
+`Dispose` removes the old ones.
+
+### 3. Snap an object to another transform's world pose
+
+Use this for constraint-like effects ("place this accessory at that bone").
+Request shadows of both the moved object (with its subtree, as in recipe 1)
+and the target. In `OnFrameGroup`, set the moved shadow's world pose from the
+target's shadow:
+
+```csharp
+moved.position = target.position;   // both are shadows
+moved.rotation = target.rotation;
+```
+
+- Read from the target's *shadow*, not the original, so you pick up what this
+  frame's earlier poses did to it.
+- World-space writes work because the shadow's ancestors are shadowed and
+  synced too. After a sync, a shadow's world pose equals the original's.
+- If one moved object can be the target of another, apply the moves in
+  hierarchy order, parents first.
+- `lossyScale` can't be assigned. Convert the target's world scale into a
+  `localScale` relative to the moved shadow's parent.
+- A `MeshRenderer` on the moved object follows by itself, because NDMF
+  parents a `MeshRenderer` proxy to its own transform's shadow.
+- If something is computed once in `Instantiate` from a world pose rather
+  than every frame, observe that transform with
+  `context.ObserveTransformPosition(t)` (available since 1.5.0) so the node is
+  rebuilt when it moves.
 
 ## Gotchas
 
@@ -148,11 +250,31 @@ the settings component through `context.*` as `preview-api.md` explains.
 5. **Don't destroy or reparent shadows yourself.** NDMF owns them. If one
    disappears unexpectedly, NDMF logs "Proxy bone was destroyed improperly!
    Resetting preview system..." and rebuilds the whole preview.
+6. **Shadow the descendants you need, explicitly.** Posing a shadow moves
+   only the shadows under it. A child bone nobody requested is still the
+   original transform, so in a skinned mesh the part weighted to the bone
+   moves and the part weighted to its children stays put. It can look right
+   by accident: NDMF shadows every `MeshRenderer`'s own transform and its
+   parents, so an accessory mesh under the child bone makes that child a
+   shadow too, and the bug only shows on avatars without one. Request the
+   referenced subtree yourself (`ShadowSubtrees` above).
 
-Gotchas 1 and 3, the redirect in "What the API does", and both code samples
-in this file were confirmed by running them against 1.15.0. The once-per-editor-frame timing in gotcha 1 and all
-of gotcha 2 come from reading 1.15.0's source and upstream tests. If the
-installed version behaves differently, trust it over this file.
+These were confirmed by running them against 1.15.0:
+
+- gotchas 1, 3, and 6
+- the redirects in "What the API does"
+- the per-transform results of recipes 2 and 3: the proxy references, the
+  child bones keeping their scale, and the world poses
+- both test samples
+
+The following come only from reading 1.15.0's source and upstream tests:
+
+- the once-per-editor-frame timing in gotcha 1
+- all of gotcha 2
+- the replay of replacements in the real pipeline
+- what finally renders
+
+If the installed version behaves differently, trust it over this file.
 
 ## Testing
 
@@ -180,8 +302,16 @@ using (new PreviewContext { ShadowBoneManager = fixture.Handle }.Activate())
     // Gotcha 1 as a regression test: two renders in one editor frame.
     node.OnFrameGroup();
     Assert.That(((SkinnedMeshRenderer)proxy).bones[0].localScale, Is.EqualTo(expected));
+
+    // Gotcha 6 as a regression test: the child bone (index 1 here) is a shadow
+    // under the posed bone's shadow, so it follows.
+    var smrProxy = (SkinnedMeshRenderer)proxy;
+    Assert.That(smrProxy.bones[1], Is.Not.SameAs(((SkinnedMeshRenderer)original).bones[1]));
+    Assert.That(smrProxy.bones[1].parent, Is.SameAs(smrProxy.bones[0]));
 }
 ```
 
+Build the test avatar for gotcha 6 from skinned renderers only. A
+`MeshRenderer` under the child bone would shadow it anyway and hide the bug.
 Also assert that the original bone's transform and the original renderer's
 `bones` are unchanged.
