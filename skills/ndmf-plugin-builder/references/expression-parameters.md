@@ -9,57 +9,83 @@ generating Modular Avatar's MA Parameters instead of editing the asset.
 
 Contents:
 
-- **Why: platform builds are matched by position, not by name**
+- **Why: platform builds are matched by name (SDK 3.11.0+) or by position**
 - **The rule for a pass**, and the usual ways a pass breaks it
 - **Declaring the parameters with `IParameterProvider`**
 - **Writing the asset yourself**
 - **Alternative: generate MA Parameters instead**
 - **Checking it**
 
-## Why: platform builds are matched by position, not by name
+## Why: platform builds are matched by name (SDK 3.11.0+) or by position
 
 A cross-platform avatar is several separate uploads under one avatar ID: a PC
 build, an Android build, and optionally an iOS build, built from one avatar
 (with or without per-platform overrides). Viewers receive the wearer's synced
 parameter values from whichever build the wearer is running, and apply them to
-the build *they* loaded.
+the build *they* loaded. How a value finds its parameter in the other build
+depends on the VRChat SDK version:
 
-VRChat's creator docs (Animator Parameters, "Cross-Platform Parameter Sync",
-last updated 2026-10-28) state that these values are matched **by position in
-the parameter list and by parameter type, not by the names of the
-parameters**: "For a given parameter to sync between PC and Quest, it has to be
-in the same position in the parameter list, and have the same parameter type."
-They recommend using the same Expression Parameters asset for every platform
-"even if one version doesn't make use of all the parameters."
+- **Avatars uploaded with VRChat SDK 3.11.0 or later: by parameter name.**
+  VRChat's announcement of SDK 3.11.0-beta.1 says it "Restored name-based
+  mapping for synced avatar parameters for avatars uploaded in SDK `3.11.0`
+  and later", and addresses community package maintainers directly: "as of
+  this SDK version, parameters representing the same thing must have the
+  same name across builds of the same avatar for different platforms." A
+  parameter whose name differs between the PC and Android builds has nothing
+  to match in the other build, whatever its position.
+- **Older uploads: by position and type.** VRChat's creator docs (Animator
+  Parameters, "Cross-Platform Parameter Sync", last updated 2026-10-28) state
+  that values are matched "by their position in the parameters list and their
+  parameter type, not by the names of the parameters": "For a given parameter
+  to sync between PC and Quest, it has to be in the same position in the
+  parameter list, and have the same parameter type." They recommend using the
+  same Expression Parameters asset for every platform "even if one version
+  doesn't make use of all the parameters."
+
+The same announcement says name-based mapping "was originally added in
+`3.10.6` but then pulled back because of incompatibilities with user tooling",
+and that it is limited to 3.11.0+ "to address incompatibilities with community
+packages that were using different names for the same parameter across
+platforms." (On the client side, VRChat 2026.4.1, build 1936, shipped
+name-based mapping and then "reverted for now".) A plugin that generates names
+per build is exactly what broke the first time.
+
+The matching itself happens in the VRChat client, keyed on the SDK version an
+avatar was uploaded with, so the SDK 3.11.0 release notes don't mention it,
+and as of 2026-11-21 the Animator Parameters page still described only the
+position rule. These details are open: whether the type (and the 3.10.6 bit
+width and signedness) must still match, how an avatar is matched when its
+platform builds were uploaded with different SDK versions, and what viewers
+see for a name that one build lacks. The announcement came with a beta, so
+also check that the behavior shipped as described in the stable release.
 
 Nothing errors when the lists differ: the build and the upload both succeed.
 The symptom only shows up across platforms at runtime. A PC wearer flips a
-toggle, and Android viewers see whatever parameter sits at that slot in the
-Android build change instead, or nothing at all. A plugin author testing on
-one platform never sees it.
+toggle, and Android viewers see nothing change, or, under the position rule,
+see whatever parameter sits at that slot in the Android build change instead.
+A plugin author testing on one platform never sees it.
 
-Keep the **names** identical too, for two reasons:
+A plugin can't tell which SDK the user will upload each platform build with,
+and most plugins support SDKs older than 3.11.0. So keep both identical:
 
-- **Today:** users who fix cross-platform order with Modular Avatar's Sync
-  Parameter Sequence depend on names. It records the primary platform's
-  parameters, and its docs say "Your primary platform avatar must contain all
-  of the parameters that are synced on any variant of your avatar. If any are
-  missing, the build will fail." A name that differs per build never matches
-  that record.
-- **Possibly tomorrow:** VRChat 2026.4.1 (build 1936, 2026-10-28) shipped
-  name-based mapping of synced parameters between platform builds ("going off
-  of names instead" of "positions in the synced parameter buffer"), and then
-  reverted it ("reverted for now"). If it comes back, a parameter whose name
-  differs between builds stops syncing even if its position matches.
+- **Names**, because SDK 3.11.0+ matches on them. Users who fix cross-platform
+  order with Modular Avatar's Sync Parameter Sequence also depend on names. It
+  records the primary platform's parameters, and its docs say "Your primary
+  platform avatar must contain all of the parameters that are synced on any
+  variant of your avatar. If any are missing, the build will fail." A name
+  that differs per build never matches that record.
+- **Order and types**, because older SDKs match on them, and nothing
+  documented yet says the name rule ignores the type.
 
 A pass that emits the same names, in the same order, with the same types,
 works under either rule.
 
-These are VRChat client behaviors, not NDMF ones, and they can change. Before
-relying on the details for a design decision, re-check
-`https://creators.vrchat.com/avatars/animator-parameters/` and the latest
-release notes under `https://docs.vrchat.com/docs/`. The docs only talk about
-"PC and Quest"; treat iOS builds the same way.
+These are VRChat behaviors, not NDMF ones, and they can change. Before relying
+on the details for a design decision, re-check
+`https://creators.vrchat.com/avatars/animator-parameters/`, the SDK release
+notes under `https://creators.vrchat.com/releases/`, and the client release
+notes under `https://docs.vrchat.com/docs/`. The docs only talk about "PC and
+Quest"; treat iOS builds the same way.
 
 ## The rule for a pass
 
@@ -68,11 +94,12 @@ every platform build: the same entries, in the same order, with the same
 `name`, `valueType`, and `networkSynced`. On VRChat SDK 3.10.6+, which adds
 per-parameter bit width, signedness, and lerp duration (the docs describe them
 under "Show Advanced Options"; see "Writing the asset yourself" for the
-fields), keep those identical too. The docs don't say whether
-unsynced entries count toward a synced parameter's position (the reverted
+fields), keep those identical too. Don't reason about which entries are
+"safe" to vary. Under the position rule, the docs don't say whether unsynced
+entries count toward a synced parameter's position (the reverted 2026.4.1
 release note's "synced parameter buffer" hints they don't, but that's not a
-guarantee), so don't reason about which entries are "safe" to vary. Keep the
-whole list identical; that is correct under any reading.
+guarantee). Under the name rule, what matters beyond the name isn't documented
+yet. Keep the whole list identical; that is correct under any reading.
 
 Your pass can only control its own output. Other tools, or a per-platform
 override with a different hierarchy, can still make the lists diverge. The
@@ -90,7 +117,8 @@ Sync Parameter Sequence component, for example).
    say), skip the renderer/animation work on that platform but still emit the
    parameter, in the same slot, with the same type. Likewise, don't shrink a
    parameter on mobile (Int to Bool, or a narrower bit width) to save synced
-   bits: the type is half of what VRChat matches on. The same applies to a
+   bits: the position rule matches on type, and nothing documented says the
+   name rule (SDK 3.11.0+) ignores it. The same applies to a
    settings flag like "enable on Android": it may gate the effect, not the
    parameter.
 
@@ -109,7 +137,12 @@ Sync Parameter Sequence component, for example).
 3. **Names that aren't deterministic.** `Guid.NewGuid()`, `GetInstanceID()`,
    `GetHashCode()` of a Unity object, a counter shared across avatars, or a
    timestamp in a generated parameter name produces a different name on every
-   build. Derive names from what the user configured (a name field on the
+   build. From SDK 3.11.0, which matches builds by name, this alone breaks
+   sync for that parameter even when its position and type line up. The
+   converse matters too: a name must mean the same thing on every platform.
+   A name built from a running counter over the components that survive on
+   this platform (`Toggle_1`, `Toggle_2`, ...) pairs the wrong parameters
+   together once Android strips one, which is worse than not syncing. Derive names from what the user configured (a name field on the
    component) or the object's path relative to the avatar root, under a fixed
    plugin-specific prefix. If you need a short unique suffix, hash that stable
    string with a fixed algorithm (e.g. SHA-1 of the path), not with object
@@ -117,9 +150,12 @@ Sync Parameter Sequence component, for example).
 
 4. **Removing "unused" parameters per platform.** A pass that drops parameters
    the current build's animators don't read shifts every later parameter on
-   that platform only. If the decision depends on platform-specific content,
-   keep the entry instead. An unused parameter costs synced bits, but keeps
-   the slots aligned.
+   that platform only, which breaks the position rule. What the name rule
+   (SDK 3.11.0+) does with a name that one build lacks isn't documented, and
+   the pass can't tell which rule the user's uploads will get anyway. If the
+   decision depends on
+   platform-specific content, keep the entry instead. An unused parameter
+   costs synced bits, but keeps the slots aligned.
 
 ## Declaring the parameters with `IParameterProvider`
 
@@ -448,7 +484,8 @@ What to watch for:
   hierarchy order, so a pass that generates MA Parameters only on some
   platforms, or with per-build names, breaks sync the same way. MA doesn't
   document how Auto rename picks names, so if a name must be stable across
-  platform builds, set an explicit deterministic name instead of Auto rename.
+  platform builds (from SDK 3.11.0, every synced name must), set an explicit
+  deterministic name instead of Auto rename.
 - **Keep your own `IParameterProvider`.** A component your pass creates only
   exists during the build. Usage UIs query the edit-time scene, so they only
   see these parameters if your source component declares them.
@@ -461,7 +498,9 @@ What to watch for:
 - In an EditMode test (see `testing.md`), build two identical avatars, run
   the pass on each, and assert that the resulting
   `(name, valueType, networkSynced)` lists are equal index by index (on SDK
-  3.10.6+, also compare `GetBitWidthByType()` and `GetRepresentationByType()`). Fresh
+  3.10.6+, also compare `GetBitWidthByType()` and `GetRepresentationByType()`).
+  Comparing index by index covers both rules: the names that SDK 3.11.0+
+  matches on, and the position and type that older SDKs match on. Fresh
   objects get fresh instance IDs, so this catches identity-based names. It
   doesn't reliably catch identity-based *ordering*: identically built avatars
   tend to get instance IDs in the same relative order. To catch that too,

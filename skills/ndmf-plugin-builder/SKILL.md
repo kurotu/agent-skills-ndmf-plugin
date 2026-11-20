@@ -139,8 +139,10 @@ behavior, and guessing wrong compiles fine but breaks quietly.
 6. If the pass adds, removes, renames, reorders, or retypes VRChat Expression
    Parameters, load `references/expression-parameters.md` first. VRChat
    matches synced parameters between an avatar's PC, Android, and iOS builds
-   by list position and type, and has tried matching by name. So the pass has
-   to emit an identical list, with identical names, on every build target.
+   by parameter name for avatars uploaded with VRChat SDK 3.11.0+, and by
+   list position and type for older uploads. A plugin can't tell which SDK
+   each build will be uploaded with, so the pass has to emit an identical
+   list, with identical deterministic names, on every build target.
    Skipping a parameter on Android, or generating names or order that change
    from build to build, passes every build and upload. It only breaks sync
    between viewers on different platforms. Also declare the generated
