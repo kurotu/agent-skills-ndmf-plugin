@@ -1,4 +1,4 @@
-# NDMF API Version Compatibility (1.3.0 -> 1.15.0)
+# NDMF API Version Compatibility (1.3.0 -> 1.15.1)
 
 This skill's other reference files describe the API surface as it exists in a
 recent NDMF release, but a real project can be pinned to whatever version it
@@ -7,7 +7,7 @@ incrementally, not present from day one -- if the project's installed NDMF
 predates an API's introduction, that API genuinely isn't there yet, and code
 written against it won't compile or won't behave as documented.
 
-**Last verified: 1.15.0 (2026-11-18).**
+**Last verified: 1.15.1 (2026-11-23).**
 
 This file's version data reflects the upstream changelog
 (`https://github.com/bdunderscore/ndmf/blob/main/CHANGELOG.md`, or the vendored
